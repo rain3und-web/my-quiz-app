@@ -336,23 +336,48 @@ def norm_answer(s: str) -> str:
 
 # ✅ 追加：要約の「前置き」や「巨大見出し」を削除
 def clean_summary_output(text: str) -> str:
-    """要約出力の前置き・不要な巨大見出しを削る（UI/構造に触れない）"""
+    """要約出力の前置き・不要な見出しを削る（UI/構造に触れない）"""
     t = (text or "").strip()
 
-    # 1) よくある前置きを削除（はい/承知しました系）
-    t = re.sub(r'^(はい[、,]?\s*)?承知(いた|し)ました[。．]?\s*', '', t)
-    t = re.sub(r'^PDF資料を要約します[。．]?\s*', '', t)
+    if not t:
+        return t
 
-    # 2) 先頭に巨大タイトル(# 見出し)が来た場合は削除
-    #   例: "# 親子関係・結婚・離婚..." みたいなのを消す（後ろの # 要点 は残す）
     lines = t.splitlines()
-    if lines:
-        first = lines[0].strip()
-        if first.startswith("#") and not re.match(r'^#\s*(要点|詳細メモ|キーワード|確認問題)\s*$', first):
-            lines = lines[1:]
-            while lines and not lines[0].strip():
-                lines = lines[1:]
-        t = "\n".join(lines).strip()
+
+    # 1) もし「# 要点」があるなら、そこより前は全部捨てる（最強・確実）
+    for i, line in enumerate(lines):
+        if re.match(r'^\s*#\s*要点\s*$', line.strip()):
+            lines = lines[i:]
+            return "\n".join(lines).strip()
+
+    # 2) 「# 要点」が無い場合の保険：先頭の前置き/見出しっぽい行を削る
+    def is_preface_or_title(s: str) -> bool:
+        s0 = s.strip()
+        if not s0:
+            return True
+        # 例: "要約" だけ / 絵文字付きなど
+        if re.fullmatch(r'(📋\s*)?要約', s0):
+            return True
+        # 承知しました系 + 要約します系
+        if re.search(r'承知(いた|し)ました', s0):
+            return True
+        if re.search(r'PDF資料.*要約', s0):
+            return True
+        # 「・」区切りの巨大タイトルっぽい1行（箇条書きではない）
+        if ("・" in s0) and (not s0.startswith("-")) and (len(s0) >= 12):
+            return True
+        return False
+
+    # 先頭から、前置き/タイトルっぽい行を連続で削る（最大10行まで）
+    cut = 0
+    for _ in range(min(10, len(lines))):
+        if is_preface_or_title(lines[0]):
+            lines.pop(0)
+            cut += 1
+            continue
+        break
+
+    return "\n".join(lines).strip()
 
     return t
 
