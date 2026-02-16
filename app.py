@@ -368,11 +368,11 @@ def get_available_model():
             continue
     return None
 
-# ✅ 追加（要約高速化のため）：要約専用の軽量モデルを固定 + Streamlitでリソースキャッシュ
+# ✅ 追加（要約高速化のため）：要約専用のモデルを固定 + Streamlitでリソースキャッシュ
 @st.cache_resource(show_spinner=False)
 def get_summary_model():
-    # 速度優先。ここだけ固定して「候補総当たり」を回避
-    return genai.GenerativeModel("gemini-2.0-flash")
+    # 内容が薄くならない速度×品質のバランス：ここを固定（候補総当たりを回避）
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 # ✅ 追加（要約高速化のため）：PDFからテキスト抽出（できる範囲で）
 @st.cache_data(show_spinner=False)
@@ -394,15 +394,43 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
 @st.cache_data(show_spinner=False)
 def summarize_text_cached(text: str) -> str:
     model = get_summary_model()
-    prompt = "資料の要点を、分かりやすく要約してください。"
+    prompt = """あなたは学習用の資料要約が得意なアシスタントです。
+以下の資料テキストを、学習者が復習しやすい形で日本語で要約してください。
+
+【要約ルール】
+- 重要点を落とさずに、情報量は“薄くしない”（ただし冗長にはしない）
+- 見出し + 箇条書き中心で構造化する
+- 専門用語は短く補足する（1行でOK）
+- 数字・条件・例外・手順があれば必ず残す
+- 可能なら最後に「覚えるべきキーワード5つ」と「確認問題2つ（答え付き）」を付ける
+
+【出力形式】
+# 要点
+- ...
+
+# 詳細メモ
+- ...
+
+# キーワード
+- ...
+
+# 確認問題
+Q1: ...
+A1: ...
+Q2: ...
+A2: ...
+"""
     return model.generate_content(
         [prompt, text],
-        generation_config={"max_output_tokens": 900, "temperature": 0.2}
+        generation_config={
+            "max_output_tokens": 1400,
+            "temperature": 0.25,
+        }
     ).text
 
 def generate_summary(files):
     # ✅ ここだけ改善（他は触らない）
-    # 1) PDFをテキスト化できるならテキストで要約（速い）
+    # 1) PDFをテキスト化できるならテキストで要約（速い＋内容も出せる）
     # 2) テキスト化できないPDFは従来通りPDFを投げる（互換性）
     try:
         texts = []
@@ -428,11 +456,23 @@ def generate_summary(files):
         # 画像PDFなどテキスト化できない分がある場合だけフォールバック
         if pdf_payloads:
             model = get_summary_model()
-            content = ["資料の要点を、分かりやすく要約してください。"] + pdf_payloads
+            content = ["""あなたは学習用の資料要約が得意なアシスタントです。
+PDF資料を日本語で要約してください。
+
+【要約ルール】
+- 重要点を落とさずに、情報量は“薄くしない”
+- 見出し + 箇条書き中心で構造化する
+- 数字・条件・例外・手順があれば必ず残す
+- 最後に「覚えるべきキーワード5つ」と「確認問題2つ（答え付き）」を付ける
+"""] + pdf_payloads
+
             with st.spinner("要約中..."):
                 pdf_summary = model.generate_content(
                     content,
-                    generation_config={"max_output_tokens": 900, "temperature": 0.2}
+                    generation_config={
+                        "max_output_tokens": 1400,
+                        "temperature": 0.25,
+                    }
                 ).text
             if base_summary and pdf_summary:
                 return base_summary + "\n\n---\n\n" + pdf_summary
