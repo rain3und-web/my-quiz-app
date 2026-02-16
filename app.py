@@ -274,7 +274,7 @@ with st.sidebar:
 
                 c_yes, c_no = st.columns(2)
                 with c_yes:
-                    if st.button("アーカイブする", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
+                    if st.button("アーカイブ", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
                         ok = archive_one_history_in_gs(st.session_state['user_id'], d)
                         st.session_state['pending_delete'] = None
                         if ok:
