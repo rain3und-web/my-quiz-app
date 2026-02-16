@@ -65,14 +65,13 @@ def save_history_to_gs(user_id, log_entry):
 
         row = [
             user_id, log_entry["date"], log_entry.get("title", "無題"),
-            log_entry["score"], log_entry["correct"], log_entry["total"],
-            json.dumps(log_entry["quiz_data"], ensure_ascii=False),
+            log_entry.get("score", ""), log_entry.get("correct", ""), log_entry.get("total", ""),
+            json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False),
             log_entry.get("summary_data", "")
         ]
 
         # ✅ 追加：archived列分を末尾に付与（新規は未アーカイブ）
         row.append("")   # ← False じゃなく空欄にする
-
 
         sheet.append_row(row)
     except Exception as e:
@@ -123,6 +122,49 @@ def archive_one_history_in_gs(user_id, date_str):
                 sheet.update_cell(idx + 2, archived_col, True)
                 return True
         return False
+    except:
+        return False
+
+# ✅ 追加：生成時点で「作成」、以後は同じ行を「上書き」する（採点もここで上書き）
+def upsert_history_in_gs(user_id, date_str, log_entry):
+    """
+    user_id + date で行を特定し、
+    - 存在すれば：タイトル/スコア/正解数/総数/quiz_data/summary_data を上書き
+    - 無ければ：append で新規作成
+    """
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        ensure_archived_column(sheet)
+
+        records = sheet.get_all_records()
+        target_row = None
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(date_str):
+                target_row = idx + 2  # header+1
+                break
+
+        title = log_entry.get("title", "無題")
+        score = log_entry.get("score", "")
+        correct = log_entry.get("correct", "")
+        total = log_entry.get("total", "")
+        quiz_data = json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False)
+        summary_data = log_entry.get("summary_data", "")
+
+        if target_row:
+            # columns: 1 user_id, 2 date, 3 title, 4 score, 5 correct, 6 total, 7 quiz_data, 8 summary_data
+            sheet.update_cell(target_row, 3, title)
+            sheet.update_cell(target_row, 4, score)
+            sheet.update_cell(target_row, 5, correct)
+            sheet.update_cell(target_row, 6, total)
+            sheet.update_cell(target_row, 7, quiz_data)
+            sheet.update_cell(target_row, 8, summary_data)
+            return True
+        else:
+            # 無ければ新規作成（archivedは空欄）
+            row = [user_id, date_str, title, score, correct, total, quiz_data, summary_data, ""]
+            sheet.append_row(row)
+            return True
     except:
         return False
 
@@ -398,18 +440,53 @@ if uploaded_files:
     with c1:
         if st.button("📝 資料を要約する", use_container_width=True):
             st.session_state['summary'] = generate_summary(uploaded_files)
+
+            # ✅ 追加：要約が作成された時点で「行を作る」
+            if st.session_state.get('user_id') and st.session_state.get('summary'):
+                # 既に作成済み（current_dateがある）なら上書き、無ければ新規作成
+                if not st.session_state.get('current_date'):
+                    st.session_state['current_date'] = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+
+                # タイトルは今のまま（無題のクイズでもOK：ユーザーが後で変える想定）
+                init_log = {
+                    "date": st.session_state['current_date'],
+                    "title": st.session_state.get('current_title', "無題"),
+                    "score": "",
+                    "correct": "",
+                    "total": "",
+                    "quiz_data": st.session_state.get('current_quiz') or [],
+                    "summary_data": st.session_state.get('summary') or ""
+                }
+                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], init_log)
+                st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+
     with c2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
             t, q = start_quiz_generation(uploaded_files)
             st.session_state.update({
-    "current_title": t,
-    "current_quiz": q,
-    "results": {},
-    "current_date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),  # ✅ ここだけ
-    "edit_mode": False
-})
+                "current_title": t,
+                "current_quiz": q,
+                "results": {},
+                "current_date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),  # ✅ ここだけ（生成時点のID）
+                "edit_mode": False
+            })
             st.session_state['show_retry'] = False
             st.session_state['last_wrong_questions'] = []
+
+            # ✅ 追加：クイズが作成された時点で「行を作る」
+            if st.session_state.get('user_id'):
+                init_log = {
+                    "date": st.session_state['current_date'],
+                    "title": st.session_state.get('current_title', "無題"),
+                    "score": "",
+                    "correct": "",
+                    "total": "",
+                    "quiz_data": st.session_state.get('current_quiz') or [],
+                    "summary_data": st.session_state.get('summary') or ""
+                }
+                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], init_log)
+                st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+
             st.rerun()
 
 if st.session_state['summary']:
@@ -682,8 +759,12 @@ if st.session_state['current_quiz']:
 
         # 履歴保存
         if st.session_state['user_id']:
+            # ✅ 採点は「上書き保存」
+            # ただしリベンジは current_date=None のままなので、従来通り採点時に新規作成になる
+            date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+
             new_log = {
-                "date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),
+                "date": date_key,
                 "title": st.session_state['current_title'],
                 "score": int((correct/len(st.session_state['current_quiz']))*100) if st.session_state['current_quiz'] else 0,
                 "correct": correct,
@@ -691,7 +772,14 @@ if st.session_state['current_quiz']:
                 "quiz_data": st.session_state['current_quiz'],
                 "summary_data": st.session_state['summary']
             }
-            save_history_to_gs(st.session_state['user_id'], new_log)
+
+            # ✅ 生成済み（current_dateあり）なら上書き。リベンジは current_date=None なので append 相当になる
+            if st.session_state.get('current_date'):
+                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
+            else:
+                # 従来通り：リベンジは採点時に新規作成
+                save_history_to_gs(st.session_state['user_id'], new_log)
+
             st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
 
         # 追加：採点後にその場でリトライを出す（rerunしない）
