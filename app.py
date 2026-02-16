@@ -372,7 +372,7 @@ def get_available_model():
 @st.cache_resource(show_spinner=False)
 def get_summary_model():
     # 速度優先。ここだけ固定して「候補総当たり」を回避
-    return genai.GenerativeModel("gemini-2.0-flash")
+    return genai.GenerativeModel("gemini-3-flash-preview")
 
 # ✅ 追加（要約高速化のため）：PDFからテキスト抽出（できる範囲で）
 @st.cache_data(show_spinner=False)
