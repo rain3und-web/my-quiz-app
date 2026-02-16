@@ -7,6 +7,14 @@ from datetime import datetime, timedelta, timezone
 from google.oauth2.service_account import Credentials
 import gspread
 
+# ✅ 追加（要約高速化のため）
+import io
+import hashlib
+try:
+    from pypdf import PdfReader
+except Exception:
+    PdfReader = None
+
 # --- 画面設定 ---
 st.set_page_config(page_title="PDF要約＆クイズ生成ツール", page_icon="🎓", layout="wide")
 JST = timezone(timedelta(hours=+9), 'JST')
@@ -360,16 +368,77 @@ def get_available_model():
             continue
     return None
 
-def generate_summary(files):
-    model = get_available_model()
-    if not model:
-        return None
-    content = ["資料の要点を、分かりやすく要約してください。"]
-    for f in files:
-        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
+# ✅ 追加（要約高速化のため）：要約専用の軽量モデルを固定 + Streamlitでリソースキャッシュ
+@st.cache_resource(show_spinner=False)
+def get_summary_model():
+    # 速度優先。ここだけ固定して「候補総当たり」を回避
+    return genai.GenerativeModel("gemini-2.0-flash")
+
+# ✅ 追加（要約高速化のため）：PDFからテキスト抽出（できる範囲で）
+@st.cache_data(show_spinner=False)
+def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+    if PdfReader is None:
+        return ""
     try:
-        with st.spinner("要約中..."):
-            return model.generate_content(content).text
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        texts = []
+        for page in reader.pages:
+            t = page.extract_text() or ""
+            if t.strip():
+                texts.append(t)
+        return "\n\n".join(texts)
+    except:
+        return ""
+
+# ✅ 追加（要約高速化のため）：同じ入力なら要約結果をキャッシュ
+@st.cache_data(show_spinner=False)
+def summarize_text_cached(text: str) -> str:
+    model = get_summary_model()
+    prompt = "資料の要点を、分かりやすく要約してください。"
+    return model.generate_content(
+        [prompt, text],
+        generation_config={"max_output_tokens": 900, "temperature": 0.2}
+    ).text
+
+def generate_summary(files):
+    # ✅ ここだけ改善（他は触らない）
+    # 1) PDFをテキスト化できるならテキストで要約（速い）
+    # 2) テキスト化できないPDFは従来通りPDFを投げる（互換性）
+    try:
+        texts = []
+        pdf_payloads = []
+        for f in files:
+            b = f.getvalue()
+            t = extract_text_from_pdf_bytes(b)
+            if t.strip():
+                texts.append(t)
+            else:
+                pdf_payloads.append({"mime_type": "application/pdf", "data": b})
+
+        # テキストが取れた分はまとめてキャッシュ要約
+        if texts:
+            joined = "\n\n---\n\n".join(texts)
+
+            # テキスト要約（キャッシュ効く）
+            with st.spinner("要約中..."):
+                base_summary = summarize_text_cached(joined)
+        else:
+            base_summary = ""
+
+        # 画像PDFなどテキスト化できない分がある場合だけフォールバック
+        if pdf_payloads:
+            model = get_summary_model()
+            content = ["資料の要点を、分かりやすく要約してください。"] + pdf_payloads
+            with st.spinner("要約中..."):
+                pdf_summary = model.generate_content(
+                    content,
+                    generation_config={"max_output_tokens": 900, "temperature": 0.2}
+                ).text
+            if base_summary and pdf_summary:
+                return base_summary + "\n\n---\n\n" + pdf_summary
+            return pdf_summary or base_summary
+
+        return base_summary or None
     except:
         return None
 
