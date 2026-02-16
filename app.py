@@ -346,7 +346,6 @@ def get_available_model():
         'gemini-2.5-flash-lite',
         'gemini-2.5-flash-lite-preview',
         'gemini-2.0-flash',
-        'gemini-2.0-flash-image',
         'gemini-2.0-flash-lite',
     ]
 
@@ -372,7 +371,7 @@ def get_available_model():
 @st.cache_resource(show_spinner=False)
 def get_summary_model():
     # 内容が薄くならない速度×品質のバランス：ここを固定（候補総当たりを回避）
-    return genai.GenerativeModel("gemini-2.5-flash")
+    return genai.GenerativeModel("gemini-2.5-pro")
 
 # ✅ 追加（要約高速化のため）：PDFからテキスト抽出（できる範囲で）
 @st.cache_data(show_spinner=False)
@@ -489,7 +488,7 @@ PDF資料を日本語で要約してください。
 - 重要点を落とさずに、情報量は“薄くしない”
 - 見出し + 箇条書き中心で構造化する
 - 数字・条件・例外・手順があれば必ず残す
-- 最後に「覚えるべきキーワード5つ」と「確認問題2つ（答え付き）」を付ける
+- 最後に「覚えるべきキーワード」を付ける
 """] + pdf_payloads
 
             with st.spinner("要約中..."):
@@ -515,7 +514,7 @@ PDF資料を日本語で要約してください。
 def build_quiz_cached(text: str) -> dict:
     model = get_summary_model()  # ここも固定モデルで高速化（候補総当たり回避）
     prompt = """あなたは学習用の確認テストを作るのが得意なアシスタントです。
-以下の資料テキストからクイズ10問をJSONで出力してください。
+以下の資料テキストからクイズ15問をJSONで出力してください。
 
 【重要】
 - 記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
