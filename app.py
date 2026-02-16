@@ -263,7 +263,7 @@ with st.sidebar:
 
             with c_del:
                 # 1段階目：アーカイブ候補にセット
-                if st.button("🗑️", key=f"del_hist_{i}", use_container_width=True):
+                if st.button("✔️", key=f"del_hist_{i}", use_container_width=True):
                     st.session_state['pending_delete'] = {"date": d, "title": t}
                     st.rerun()
 
