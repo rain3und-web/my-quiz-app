@@ -401,7 +401,13 @@ if uploaded_files:
     with c2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
             t, q = start_quiz_generation(uploaded_files)
-            st.session_state.update({"current_title": t, "current_quiz": q, "results": {}, "current_date": None, "edit_mode": False})
+            st.session_state.update({
+    "current_title": t,
+    "current_quiz": q,
+    "results": {},
+    "current_date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),  # ✅ ここだけ
+    "edit_mode": False
+})
             st.session_state['show_retry'] = False
             st.session_state['last_wrong_questions'] = []
             st.rerun()
