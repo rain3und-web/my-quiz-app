@@ -662,7 +662,7 @@ if st.session_state['current_quiz']:
             st.session_state['current_quiz'][i]['is_correct'] = is_correct
 
             if is_correct:
-                st.success(f"第{i+1}問: 正解")
+                st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
                 correct += 1
             else:
                 st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
