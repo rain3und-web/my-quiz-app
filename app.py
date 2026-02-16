@@ -433,6 +433,119 @@ if st.session_state['current_quiz']:
 
         st.markdown("---")
 
+        # ✅ 追加：問題の編集（既存問題を修正）
+        st.markdown("### ✏️ 既存の問題を編集")
+        if st.session_state['current_quiz']:
+            edit_options = []
+            for i, q in enumerate(st.session_state['current_quiz']):
+                qtext = (q.get("question", "") or "").replace("\n", " ")
+                if len(qtext) > 30:
+                    qtext = qtext[:30] + "..."
+                edit_options.append(f"Q{i+1}: {qtext}")
+
+            selected = st.selectbox("編集する問題を選択", edit_options, key="edit_selectbox")
+
+            # 選択されたインデックス
+            try:
+                edit_idx = int(selected.split(":")[0].replace("Q", "").strip()) - 1
+            except:
+                edit_idx = 0
+
+            # 選択が変わったらフォーム値を詰め直す（同一run内で反映）
+            if 'edit_last_idx' not in st.session_state:
+                st.session_state['edit_last_idx'] = None
+
+            if st.session_state['edit_last_idx'] != edit_idx:
+                q0 = st.session_state['current_quiz'][edit_idx]
+                st.session_state['edit_q_text'] = q0.get("question", "")
+                st.session_state['edit_ans_text'] = q0.get("answer", "")
+                st.session_state['edit_exp_text'] = q0.get("explanation", "")
+
+                opts0 = q0.get("options", [])
+                is_choice = bool(opts0 and isinstance(opts0, list) and len(opts0) >= 2)
+                st.session_state['edit_mode_radio'] = "選択式（optionsあり）" if is_choice else "記述式（optionsなし）"
+                st.session_state['edit_opts_text'] = "\n".join([str(x) for x in opts0]) if is_choice else ""
+                st.session_state['edit_last_idx'] = edit_idx
+
+            edit_q = st.text_area("問題文（編集）", key="edit_q_text", height=80)
+            edit_mode = st.radio("形式（編集）", ["記述式（optionsなし）", "選択式（optionsあり）"], horizontal=True, key="edit_mode_radio")
+
+            edit_opts_raw = ""
+            if edit_mode == "選択式（optionsあり）":
+                edit_opts_raw = st.text_area(
+                    "選択肢（編集）（1行1つ / またはカンマ区切り）",
+                    key="edit_opts_text",
+                    height=90
+                )
+
+            edit_ans = st.text_input("正解（answer）（編集）", key="edit_ans_text")
+            edit_exp = st.text_area("解説（explanation）（編集）", key="edit_exp_text", height=80)
+
+            c_save, c_dup, c_cancel = st.columns([4, 3, 3])
+
+            with c_save:
+                if st.button("💾 この編集を保存", type="primary", use_container_width=True, key="edit_save_btn"):
+                    if not str(edit_q).strip():
+                        st.error("問題文が空です。")
+                    elif not str(edit_ans).strip():
+                        st.error("正解（answer）が空です。")
+                    else:
+                        opts_list = []
+                        if edit_mode == "選択式（optionsあり）":
+                            raw = (edit_opts_raw or "").strip()
+                            if raw:
+                                if "\n" in raw:
+                                    opts_list = [x.strip() for x in raw.splitlines() if x.strip()]
+                                else:
+                                    opts_list = [x.strip() for x in raw.split(",") if x.strip()]
+
+                        # 反映（user_ans / is_correct は一旦クリアして再採点前提にする）
+                        qref = st.session_state['current_quiz'][edit_idx]
+                        qref["question"] = str(edit_q).strip()
+                        qref["options"] = opts_list if opts_list else []
+                        qref["answer"] = str(edit_ans).strip()
+                        qref["explanation"] = str(edit_exp).strip()
+                        qref.pop("user_ans", None)
+                        qref.pop("is_correct", None)
+
+                        reset_quiz_input_widgets()
+                        st.session_state['show_retry'] = False
+                        st.session_state['last_wrong_questions'] = []
+                        st.rerun()
+
+            with c_dup:
+                if st.button("📄 この問題を複製", use_container_width=True, key="edit_dup_btn"):
+                    qref = st.session_state['current_quiz'][edit_idx]
+                    copied = {
+                        "question": qref.get("question", ""),
+                        "options": qref.get("options", []) if isinstance(qref.get("options", []), list) else [],
+                        "answer": qref.get("answer", ""),
+                        "explanation": qref.get("explanation", "")
+                    }
+                    st.session_state['current_quiz'].append(copied)
+
+                    reset_quiz_input_widgets()
+                    st.session_state['show_retry'] = False
+                    st.session_state['last_wrong_questions'] = []
+                    st.rerun()
+
+            with c_cancel:
+                if st.button("↩️ 編集内容を破棄", use_container_width=True, key="edit_cancel_btn"):
+                    # 現在の選択問題の内容でフォームを戻すだけ（保存しない）
+                    q0 = st.session_state['current_quiz'][edit_idx]
+                    st.session_state['edit_q_text'] = q0.get("question", "")
+                    st.session_state['edit_ans_text'] = q0.get("answer", "")
+                    st.session_state['edit_exp_text'] = q0.get("explanation", "")
+                    opts0 = q0.get("options", [])
+                    is_choice = bool(opts0 and isinstance(opts0, list) and len(opts0) >= 2)
+                    st.session_state['edit_mode_radio'] = "選択式（optionsあり）" if is_choice else "記述式（optionsなし）"
+                    st.session_state['edit_opts_text'] = "\n".join([str(x) for x in opts0]) if is_choice else ""
+                    st.rerun()
+        else:
+            st.info("編集できる問題がありません。")
+
+        st.markdown("---")
+
         # --- 手動追加UI ---
         st.markdown("### ➕ 手動で問題を追加")
         new_q = st.text_area("問題文", key="add_q_text", placeholder="例：刑法における故意とは何か説明せよ。", height=80)
@@ -523,7 +636,7 @@ if st.session_state['current_quiz']:
                 st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
                 wrong_questions.append(st.session_state['current_quiz'][i])
 
-            # ✅ 修正：解説をトグル（expander）ではなく常時表示
+            # ✅ 解説は常時表示
             st.markdown("#### 解説")
             st.write(q.get('explanation', ''))
             st.markdown("---")
