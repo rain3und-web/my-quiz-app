@@ -7,14 +7,6 @@ from datetime import datetime, timedelta, timezone
 from google.oauth2.service_account import Credentials
 import gspread
 
-# ✅ 追加（要約高速化のため）
-import io
-import hashlib
-try:
-    from pypdf import PdfReader
-except Exception:
-    PdfReader = None
-
 # --- 画面設定 ---
 st.set_page_config(page_title="PDF要約＆クイズ生成ツール", page_icon="🎓", layout="wide")
 JST = timezone(timedelta(hours=+9), 'JST')
@@ -155,10 +147,6 @@ if 'show_retry' not in st.session_state:
 if 'pending_delete' not in st.session_state:
     st.session_state['pending_delete'] = None
 
-# ✅ 追加：アーカイブ表示ON/OFF（デフォルトOFF）
-if 'show_archived' not in st.session_state:
-    st.session_state['show_archived'] = False
-
 # --- 🎨 CSS: デザイン設定 (修正版) ---
 st.markdown("""
     <style>
@@ -248,14 +236,8 @@ with st.sidebar:
     if st.session_state['user_id'] and st.session_state['quiz_history']:
         st.header("📊 履歴")
 
-        # ✅ 追加：アーカイブ表示ON/OFF
-        st.checkbox("アーカイブも表示", value=st.session_state.get("show_archived", False), key="show_archived")
-
-        # ✅ 変更：アーカイブはトグルで表示切替
-        if st.session_state.get("show_archived"):
-            visible_history = list(st.session_state['quiz_history'])
-        else:
-            visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
+        # ✅ 追加：アーカイブは非表示（データは残す）
+        visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
 
         for i, log in enumerate(reversed(visible_history)):
             d = log.get('date', '')
@@ -292,6 +274,7 @@ with st.sidebar:
 
                 c_yes, c_no = st.columns(2)
                 with c_yes:
+                    if st.button("アーカイブする", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
                     if st.button("アーカイブ", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
                         ok = archive_one_history_in_gs(st.session_state['user_id'], d)
                         st.session_state['pending_delete'] = None
@@ -334,28 +317,6 @@ def norm_answer(s: str) -> str:
     s = s.replace("・", "").replace("、", "").replace("。", "")
     return s
 
-# ✅ 追加：要約の「前置き」や「巨大見出し」を削除
-def clean_summary_output(text: str) -> str:
-    """要約出力の前置き・不要な巨大見出しを削る（UI/構造に触れない）"""
-    t = (text or "").strip()
-
-    # 1) よくある前置きを削除（はい/承知しました系）
-    t = re.sub(r'^(はい[、,]?\s*)?承知(いた|し)ました[。．]?\s*', '', t)
-    t = re.sub(r'^PDF資料を要約します[。．]?\s*', '', t)
-
-    # 2) 先頭に巨大タイトル(# 見出し)が来た場合は削除
-    #   例: "# 親子関係・結婚・離婚..." みたいなのを消す（後ろの # 要点 は残す）
-    lines = t.splitlines()
-    if lines:
-        first = lines[0].strip()
-        if first.startswith("#") and not re.match(r'^#\s*(要点|詳細メモ|キーワード|確認問題)\s*$', first):
-            lines = lines[1:]
-            while lines and not lines[0].strip():
-                lines = lines[1:]
-        t = "\n".join(lines).strip()
-
-    return t
-
 # ✅ 追加：問題削除/追加後に入力ウィジェットをリセット
 def reset_quiz_input_widgets():
     for k in list(st.session_state.keys()):
@@ -378,6 +339,7 @@ def get_available_model():
         'gemini-2.5-flash-lite',
         'gemini-2.5-flash-lite-preview',
         'gemini-2.0-flash',
+        'gemini-2.0-flash-image',
         'gemini-2.0-flash-lite',
     ]
 
@@ -399,215 +361,32 @@ def get_available_model():
             continue
     return None
 
-# ✅ 追加（要約高速化のため）：要約専用のモデルを固定 + Streamlitでリソースキャッシュ
-@st.cache_resource(show_spinner=False)
-def get_summary_model():
-    # 内容が薄くならない速度×品質のバランス：ここを固定（候補総当たりを回避）
-    return genai.GenerativeModel("gemini-2.0-flash")
-
-# ✅ 追加（要約高速化のため）：PDFからテキスト抽出（できる範囲で）
-@st.cache_data(show_spinner=False)
-def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
-    if PdfReader is None:
-        return ""
-    try:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        texts = []
-        for page in reader.pages:
-            t = page.extract_text() or ""
-            if t.strip():
-                texts.append(t)
-        return "\n\n".join(texts)
-    except:
-        return ""
-
-# ✅ 追加：生成が途中で切れたときに「続きを取りに行って結合」する（要約/クイズ共通で使用）
-def generate_with_continuation(model, content, generation_config, max_rounds=3):
-    text_parts = []
-    last_text = ""
-
-    for _ in range(max_rounds):
-        res = model.generate_content(content, generation_config=generation_config)
-        part = getattr(res, "text", "") or ""
-        if part:
-            text_parts.append(part)
-            last_text = part
-
-        finish_reason = None
-        try:
-            finish_reason = res.candidates[0].finish_reason
-        except:
-            finish_reason = None
-
-        if str(finish_reason) not in ("MAX_TOKENS", "FinishReason.MAX_TOKENS"):
-            break
-
-        if not last_text.strip():
-            break
-
-        content = [
-            "今の出力の続きを、重複なしでそのまま出してください。見出しや箇条書きの体裁は維持してください。"
-        ]
-
-    # ✅ 変更：最後に要約の前置き/巨大見出しを除去
-    return clean_summary_output("\n".join([p.strip() for p in text_parts if p.strip()]).strip())
-
-# ✅ 追加（要約高速化のため）：同じ入力なら要約結果をキャッシュ
-@st.cache_data(show_spinner=False)
-def summarize_text_cached(text: str) -> str:
-    model = get_summary_model()
-    prompt = """あなたは学習用の資料要約が得意なアシスタントです。
-以下の資料テキストを、学習者が復習しやすい形で日本語で要約してください。
-
-【要約ルール】
-- 重要点を落とさずに、情報量は“簡潔に”（わかりやすさを重視）
-- 見出し + 箇条書き中心で構造化する
-- 専門用語は短く補足する（1行でOK）
-- 数字・条件・例外・手順があれば必ず残す
-
-【出力形式】
-# 要点
-- ...
-
-# 詳細メモ
-- ...
-
-# キーワード
-- ...
-
-"""
-    return generate_with_continuation(
-        model=model,
-        content=[prompt, text],
-        generation_config={
-            "max_output_tokens": 2400,
-            "temperature": 0.25,
-        },
-        max_rounds=3
-    )
-
 def generate_summary(files):
-    # ✅ ここだけ改善（他は触らない）
-    # 1) PDFをテキスト化できるならテキストで要約（速い＋内容も出せる）
-    # 2) テキスト化できないPDFは従来通りPDFを投げる（互換性）
+    model = get_available_model()
+    if not model:
+        return None
+    content = ["資料の要点を、分かりやすく要約してください。"]
+    for f in files:
+        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
     try:
-        texts = []
-        pdf_payloads = []
-        for f in files:
-            b = f.getvalue()
-            t = extract_text_from_pdf_bytes(b)
-            if t.strip():
-                texts.append(t)
-            else:
-                pdf_payloads.append({"mime_type": "application/pdf", "data": b})
-
-        # テキストが取れた分はまとめてキャッシュ要約
-        if texts:
-            joined = "\n\n---\n\n".join(texts)
-
-            # テキスト要約（キャッシュ効く）
-            with st.spinner("要約中..."):
-                base_summary = summarize_text_cached(joined)
-        else:
-            base_summary = ""
-
-        # 画像PDFなどテキスト化できない分がある場合だけフォールバック
-        if pdf_payloads:
-            model = get_summary_model()
-            content = ["""あなたは学習用の資料要約が得意なアシスタントです。
-PDF資料を日本語で要約してください。
-
-【要約ルール】
-- 重要点を落とさずに、情報量は“簡潔に”（わかりやすさを重視）
-- 見出し + 箇条書き中心で構造化する
-- 数字・条件・例外・手順があれば必ず残す
-"""] + pdf_payloads
-
-            with st.spinner("要約中..."):
-                pdf_summary = generate_with_continuation(
-                    model=model,
-                    content=content,
-                    generation_config={
-                        "max_output_tokens": 2400,
-                        "temperature": 0.25,
-                    },
-                    max_rounds=3
-                )
-            if base_summary and pdf_summary:
-                return base_summary + "\n\n---\n\n" + pdf_summary
-            return pdf_summary or base_summary
-
-        return base_summary or None
+        with st.spinner("要約中..."):
+            return model.generate_content(content).text
     except:
         return None
 
-# ✅ 追加：クイズ生成も「PDF→テキスト化→テキストで作る」を優先（速い）
-@st.cache_data(show_spinner=False)
-def build_quiz_cached(text: str) -> dict:
-    model = get_summary_model()  # ここも固定モデルで高速化（候補総当たり回避）
-    prompt = """あなたは学習用の確認テストを作るのが得意なアシスタントです。
-以下の資料テキストからクイズ15問をJSONで出力してください。
-
-【重要】
-- 記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
-- 出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
-- 問題は「暗記」だけでなく「理解」も問う（要件・例外・比較・因果・手順など）。
-- explanationは短すぎない（1〜3文）。
-
-【JSON形式】
-{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}
-"""
-    res_text = generate_with_continuation(
-        model=model,
-        content=[prompt, text],
-        generation_config={
-            "max_output_tokens": 2400,
-            "temperature": 0.3,
-        },
-        max_rounds=2
-    )
-    return parse_json_safely(res_text)
-
 def start_quiz_generation(files):
-    # ✅ ここだけ改善（他は触らない）
-    # 1) テキスト抽出できるPDFはテキストでクイズ生成（速い）
-    # 2) テキスト抽出できないPDFだけ従来通りPDFを投げる
-    try:
-        texts = []
-        pdf_payloads = []
-        for f in files:
-            b = f.getvalue()
-            t = extract_text_from_pdf_bytes(b)
-            if t.strip():
-                texts.append(t)
-            else:
-                pdf_payloads.append({"mime_type": "application/pdf", "data": b})
-
-        if texts:
-            joined = "\n\n---\n\n".join(texts)
-            with st.spinner("クイズ作成中..."):
-                data = build_quiz_cached(joined)
-            return data.get("title", "無題"), data.get("quizzes", [])
-
-        # フォールバック：画像PDFなどはPDFを投げる（互換）
-        model = get_summary_model()
-        prompt = """PDFからクイズ10問をJSONで出力。
+    model = get_available_model()
+    if not model:
+        return "無題", []
+    prompt = """PDFからクイズ10問をJSONで出力。
 【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
 【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
 {"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
-        content = [prompt] + pdf_payloads
-
+    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
+    try:
         with st.spinner("クイズ作成中..."):
-            res_text = generate_with_continuation(
-                model=model,
-                content=content,
-                generation_config={
-                    "max_output_tokens": 2400,
-                    "temperature": 0.3,
-                },
-                max_rounds=2
-            )
-            data = parse_json_safely(res_text)
+            res = model.generate_content(content).text
+            data = parse_json_safely(res)
             return data.get("title", "無題"), data.get("quizzes", [])
     except:
         return "無題", []
@@ -923,4 +702,3 @@ if st.session_state['current_quiz']:
             st.session_state['current_date'] = None
             st.session_state['show_retry'] = False
             st.session_state['last_wrong_questions'] = []
-            st.rerun()
