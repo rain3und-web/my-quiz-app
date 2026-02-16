@@ -432,7 +432,6 @@ def summarize_text_cached(text: str) -> str:
 - 見出し + 箇条書き中心で構造化する
 - 専門用語は短く補足する（1行でOK）
 - 数字・条件・例外・手順があれば必ず残す
-- 可能なら最後に「覚えるべきキーワード5つ」と「確認問題2つ（答え付き）」を付ける
 
 【出力形式】
 # 要点
@@ -444,11 +443,6 @@ def summarize_text_cached(text: str) -> str:
 # キーワード
 - ...
 
-# 確認問題
-Q1: ...
-A1: ...
-Q2: ...
-A2: ...
 """
     return generate_with_continuation(
         model=model,
