@@ -390,6 +390,36 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     except:
         return ""
 
+# ✅ 追加：生成が途中で切れたときに「続きを取りに行って結合」する（要約/クイズ共通で使用）
+def generate_with_continuation(model, content, generation_config, max_rounds=3):
+    text_parts = []
+    last_text = ""
+
+    for _ in range(max_rounds):
+        res = model.generate_content(content, generation_config=generation_config)
+        part = getattr(res, "text", "") or ""
+        if part:
+            text_parts.append(part)
+            last_text = part
+
+        finish_reason = None
+        try:
+            finish_reason = res.candidates[0].finish_reason
+        except:
+            finish_reason = None
+
+        if str(finish_reason) not in ("MAX_TOKENS", "FinishReason.MAX_TOKENS"):
+            break
+
+        if not last_text.strip():
+            break
+
+        content = [
+            "今の出力の続きを、重複なしでそのまま出してください。見出しや箇条書きの体裁は維持してください。"
+        ]
+
+    return "\n".join([p.strip() for p in text_parts if p.strip()]).strip()
+
 # ✅ 追加（要約高速化のため）：同じ入力なら要約結果をキャッシュ
 @st.cache_data(show_spinner=False)
 def summarize_text_cached(text: str) -> str:
@@ -420,13 +450,15 @@ A1: ...
 Q2: ...
 A2: ...
 """
-    return model.generate_content(
-        [prompt, text],
+    return generate_with_continuation(
+        model=model,
+        content=[prompt, text],
         generation_config={
-            "max_output_tokens": 1400,
+            "max_output_tokens": 2400,
             "temperature": 0.25,
-        }
-    ).text
+        },
+        max_rounds=3
+    )
 
 def generate_summary(files):
     # ✅ ここだけ改善（他は触らない）
@@ -467,13 +499,15 @@ PDF資料を日本語で要約してください。
 """] + pdf_payloads
 
             with st.spinner("要約中..."):
-                pdf_summary = model.generate_content(
-                    content,
+                pdf_summary = generate_with_continuation(
+                    model=model,
+                    content=content,
                     generation_config={
-                        "max_output_tokens": 1400,
+                        "max_output_tokens": 2400,
                         "temperature": 0.25,
-                    }
-                ).text
+                    },
+                    max_rounds=3
+                )
             if base_summary and pdf_summary:
                 return base_summary + "\n\n---\n\n" + pdf_summary
             return pdf_summary or base_summary
@@ -482,19 +516,73 @@ PDF資料を日本語で要約してください。
     except:
         return None
 
+# ✅ 追加：クイズ生成も「PDF→テキスト化→テキストで作る」を優先（速い）
+@st.cache_data(show_spinner=False)
+def build_quiz_cached(text: str) -> dict:
+    model = get_summary_model()  # ここも固定モデルで高速化（候補総当たり回避）
+    prompt = """あなたは学習用の確認テストを作るのが得意なアシスタントです。
+以下の資料テキストからクイズ10問をJSONで出力してください。
+
+【重要】
+- 記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+- 出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+- 問題は「暗記」だけでなく「理解」も問う（要件・例外・比較・因果・手順など）。
+- explanationは短すぎない（1〜3文）。
+
+【JSON形式】
+{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}
+"""
+    res_text = generate_with_continuation(
+        model=model,
+        content=[prompt, text],
+        generation_config={
+            "max_output_tokens": 2400,
+            "temperature": 0.3,
+        },
+        max_rounds=2
+    )
+    return parse_json_safely(res_text)
+
 def start_quiz_generation(files):
-    model = get_available_model()
-    if not model:
-        return "無題", []
-    prompt = """PDFからクイズ10問をJSONで出力。
+    # ✅ ここだけ改善（他は触らない）
+    # 1) テキスト抽出できるPDFはテキストでクイズ生成（速い）
+    # 2) テキスト抽出できないPDFだけ従来通りPDFを投げる
+    try:
+        texts = []
+        pdf_payloads = []
+        for f in files:
+            b = f.getvalue()
+            t = extract_text_from_pdf_bytes(b)
+            if t.strip():
+                texts.append(t)
+            else:
+                pdf_payloads.append({"mime_type": "application/pdf", "data": b})
+
+        if texts:
+            joined = "\n\n---\n\n".join(texts)
+            with st.spinner("クイズ作成中..."):
+                data = build_quiz_cached(joined)
+            return data.get("title", "無題"), data.get("quizzes", [])
+
+        # フォールバック：画像PDFなどはPDFを投げる（互換）
+        model = get_summary_model()
+        prompt = """PDFからクイズ10問をJSONで出力。
 【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
 【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
 {"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
-    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
-    try:
+        content = [prompt] + pdf_payloads
+
         with st.spinner("クイズ作成中..."):
-            res = model.generate_content(content).text
-            data = parse_json_safely(res)
+            res_text = generate_with_continuation(
+                model=model,
+                content=content,
+                generation_config={
+                    "max_output_tokens": 2400,
+                    "temperature": 0.3,
+                },
+                max_rounds=2
+            )
+            data = parse_json_safely(res_text)
             return data.get("title", "無題"), data.get("quizzes", [])
     except:
         return "無題", []
