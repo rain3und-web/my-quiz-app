@@ -232,12 +232,18 @@ with st.sidebar:
 
     st.divider()
 
-    # ✅ 入れ替え：後に履歴
+        # ✅ 入れ替え：後に履歴
     if st.session_state['user_id'] and st.session_state['quiz_history']:
         st.header("📊 履歴")
 
-        # ✅ 追加：アーカイブは非表示（データは残す）
-        visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
+        # ✅ 追加：アーカイブ表示オン/オフ（UI追加はこれだけ）
+        show_archived = st.checkbox("アーカイブも表示", value=False)
+
+        # ✅ 既存の挙動はそのまま：デフォルトは非表示、ONの時だけ全部表示
+        if show_archived:
+            visible_history = st.session_state['quiz_history']
+        else:
+            visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
 
         for i, log in enumerate(reversed(visible_history)):
             d = log.get('date', '')
