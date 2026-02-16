@@ -71,7 +71,8 @@ def save_history_to_gs(user_id, log_entry):
         ]
 
         # ✅ 追加：archived列分を末尾に付与（新規は未アーカイブ）
-        row.append(False)
+        row.append("")   # ← False じゃなく空欄にする
+
 
         sheet.append_row(row)
     except Exception as e:
