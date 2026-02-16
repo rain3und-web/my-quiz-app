@@ -84,22 +84,18 @@ def upsert_history_to_gs(user_id, log_entry):
         sheet = client.open("study_history_db").sheet1
         ensure_archived_column(sheet)
 
-        headers = sheet.row_values(1)
-        archived_col = headers.index("archived") + 1 if "archived" in headers else None
-
         records = sheet.get_all_records()
 
         # 同じ user_id + date の行を探す
         target_row = None
         for idx, r in enumerate(records):
-            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(log_entry["date"]):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(log_entry.get("date")):
                 target_row = idx + 2  # ヘッダーの次行
                 break
 
-        # 書き込む値（既存の列順に合わせる：A=user_id, B=date, C=title, D=score, E=correct, F=total, G=quiz_data, H=summary_data, I=archived）
         values = [
             user_id,
-            log_entry["date"],
+            log_entry.get("date", ""),
             log_entry.get("title", "無題"),
             log_entry.get("score", 0),
             log_entry.get("correct", 0),
@@ -109,16 +105,27 @@ def upsert_history_to_gs(user_id, log_entry):
         ]
 
         if target_row:
-            # A〜H を上書き
             sheet.update(f"A{target_row}:H{target_row}", [values])
         else:
-            # 新規追加（archivedは空欄 or FalseどっちでもOK。空欄にしたいなら ""）
-            row = values + [False]  # ← FALSEが嫌なら "" にしてOK
-            sheet.append_row(row)
+            sheet.append_row(values + [""])  # archivedは空欄
 
         return True
     except Exception as e:
         st.error(f"保存エラー: {e}")
+        return False
+
+def update_title_in_gs(user_id, date_str, new_title):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        ensure_archived_column(sheet)  # ✅ 追加
+        records = sheet.get_all_records()
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(date_str):
+                sheet.update_cell(idx + 2, 3, new_title)
+                return True
+        return False
+    except:
         return False
 
 def clear_history_from_gs(user_id):
@@ -456,26 +463,13 @@ if st.session_state['current_quiz']:
             st.subheader(f"📖 {st.session_state['current_title']}")
     with col_btn:
         if st.session_state['edit_mode']:
-    if st.button("💾 保存", use_container_width=True):
-        st.session_state['current_title'] = new_title_input
-
-        # ✅ 採点なしでも保存/上書き
-        if st.session_state['user_id'] and st.session_state['current_date']:
-            log = {
-                "date": st.session_state['current_date'],
-                "title": st.session_state['current_title'],
-                "score": 0,
-                "correct": 0,
-                "total": len(st.session_state['current_quiz']) if st.session_state['current_quiz'] else 0,
-                "quiz_data": st.session_state['current_quiz'] or [],
-                "summary_data": st.session_state.get('summary') or ""
-            }
-            upsert_history_to_gs(st.session_state['user_id'], log)
-            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
-
-        st.session_state['edit_mode'] = False
-        st.rerun()
-
+            if st.button("💾 保存", use_container_width=True):
+                if st.session_state['current_date'] and st.session_state['user_id']:
+    update_title_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_title_input)
+    st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                st.session_state['current_title'] = new_title_input
+                st.session_state['edit_mode'] = False
+                st.rerun()
         else:
             if st.button("✏️ 題名を変更", use_container_width=True):
                 st.session_state['edit_mode'] = True
