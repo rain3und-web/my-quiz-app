@@ -732,6 +732,7 @@ if st.session_state['current_quiz']:
 
     # フォーム外処理
     if submitted:
+        st.balloons()
         correct = 0
         wrong_questions = []
 
