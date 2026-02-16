@@ -1,0 +1,560 @@
+import streamlit as st
+import google.generativeai as genai
+import json
+import os
+import re
+from datetime import datetime, timedelta, timezone
+from google.oauth2.service_account import Credentials
+import gspread
+
+# --- 画面設定 ---
+st.set_page_config(page_title="PDF要約＆クイズ生成ツール", page_icon="🎓", layout="wide")
+JST = timezone(timedelta(hours=+9), 'JST')
+
+# --- Googleスプレッドシート連携 ---
+def get_gspread_client():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    return gspread.authorize(credentials)
+
+def load_history_from_gs(user_id):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        records = sheet.get_all_records()
+        user_history = []
+        for r in records:
+            if str(r.get("user_id")) == str(user_id):
+                q_data = r.get("quiz_data", "[]")
+                if isinstance(q_data, str):
+                    try:
+                        q_data = json.loads(q_data)
+                    except:
+                        q_data = []
+                user_history.append({
+                    "date": r.get("date"),
+                    "title": r.get("title", "無題"),
+                    "score": r.get("score"),
+                    "correct": r.get("correct"),
+                    "total": r.get("total"),
+                    "quiz_data": q_data,
+                    "summary_data": r.get("summary_data")
+                })
+        return user_history
+    except:
+        return []
+
+def save_history_to_gs(user_id, log_entry):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        row = [
+            user_id, log_entry["date"], log_entry.get("title", "無題"),
+            log_entry["score"], log_entry["correct"], log_entry["total"],
+            json.dumps(log_entry["quiz_data"], ensure_ascii=False),
+            log_entry.get("summary_data", "")
+        ]
+        sheet.append_row(row)
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
+
+def update_title_in_gs(user_id, date_str, new_title):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        records = sheet.get_all_records()
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(date_str):
+                sheet.update_cell(idx + 2, 3, new_title)
+                return True
+        return False
+    except:
+        return False
+
+def clear_history_from_gs(user_id):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        cells = sheet.findall(str(user_id))
+        rows_to_delete = sorted(list(set([cell.row for cell in cells])), reverse=True)
+        for row_idx in rows_to_delete:
+            if str(sheet.cell(row_idx, 1).value) == str(user_id):
+                sheet.delete_rows(row_idx)
+        return True
+    except:
+        return False
+
+# ✅ 追加：履歴を1件だけ削除
+def delete_one_history_from_gs(user_id, date_str):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        records = sheet.get_all_records()
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(date_str):
+                sheet.delete_rows(idx + 2)  # ヘッダー1行想定
+                return True
+        return False
+    except:
+        return False
+
+# --- セッション初期化 ---
+for key in ['user_id', 'quiz_history', 'current_quiz', 'results', 'summary', 'current_date', 'edit_mode']:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != 'quiz_history' and key != 'results' else ([] if key == 'quiz_history' else {})
+        if key == 'edit_mode':
+            st.session_state[key] = False
+
+if 'current_title' not in st.session_state:
+    st.session_state['current_title'] = "無題のクイズ"
+
+# 追加：モデル名キャッシュ、採点後フラグ（表示安定用）
+if 'model_name' not in st.session_state:
+    st.session_state['model_name'] = None
+if 'last_wrong_questions' not in st.session_state:
+    st.session_state['last_wrong_questions'] = []
+if 'show_retry' not in st.session_state:
+    st.session_state['show_retry'] = False
+
+# ✅ 追加：履歴個別削除の誤爆防止用（削除予定を保持）
+if 'pending_delete' not in st.session_state:
+    st.session_state['pending_delete'] = None
+
+# --- 🎨 CSS: デザイン設定 (修正版) ---
+st.markdown("""
+    <style>
+    /* サイドバー履歴ボタン */
+    div[data-testid="stSidebar"] .stButton button[kind="secondary"] div p {
+        white-space: pre-wrap !important;
+        line-height: 1.4 !important;
+        text-align: left !important;
+        font-size: 0.9rem !important;
+    }
+    div[data-testid="stSidebar"] .stButton button[kind="secondary"] {
+        height: auto !important;
+        padding: 8px 10px !important;
+        border: 1px solid #ddd !important;
+        border-left: 5px solid #4CAF50 !important;
+        border-radius: 6px !important;
+        text-align: left !important;
+        background-color: #f9f9f9 !important;
+        color: #333 !important;
+    }
+    div[data-testid="stSidebar"] .stButton button[kind="secondary"]:hover {
+        background-color: #e6f7ff !important;
+        border-color: #4CAF50 !important;
+    }
+
+    /* 💡 問題文ボックス (Flexboxでレイアウト安定化) */
+    .question-box {
+        display: flex; /* 横並びにする */
+        align-items: flex-start; /* 上端で揃える */
+        background-color: #f0f8ff;
+        border-left: 4px solid #0078d7;
+        padding: 12px 15px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        margin-top: 8px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .question-number {
+        font-weight: bold;
+        color: #0078d7;
+        margin-right: 12px; /* 本文との間隔 */
+        font-size: 1.1em;
+        flex-shrink: 0; /* 番号の幅が縮まないように固定 */
+        line-height: 1.6; /* 本文の行間と合わせる */
+    }
+    .question-text {
+        color: #2c3e50;
+        white-space: pre-wrap; /* 改行をそのまま表示 */
+        line-height: 1.6;
+        flex-grow: 1; /* 残りの幅を全部使う */
+        word-wrap: break-word; /* 長い単語も折り返す */
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🎓 PDF要約＆クイズ生成ツール")
+
+# --- APIキー ---
+# 💡 APIキーを直書きしないように修正（ここは雨音の最新版をそのまま）
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key.strip())
+else:
+    st.error("APIキーが設定されていません。secrets.tomlにGEMINI_API_KEYを設定してください。")
+    st.stop()
+
+# --- サイドバー ---
+with st.sidebar:
+    st.header("👤 ログイン")
+    user_input = st.text_input("ユーザー名", value=st.session_state['user_id'] or "")
+    if st.button("ログイン / 切り替え", key="login_btn", type="primary"):
+        if user_input:
+            st.session_state['user_id'] = user_input
+            with st.spinner("同期中..."):
+                st.session_state['quiz_history'] = load_history_from_gs(user_input)
+            st.session_state['pending_delete'] = None
+            st.rerun()
+
+    st.divider()
+
+    # ✅ 入れ替え：先にPDFアップロード
+    uploaded_files = st.file_uploader("PDFをアップロード", type=["pdf"], accept_multiple_files=True)
+
+    st.divider()
+
+    # ✅ 入れ替え：後に履歴
+    if st.session_state['user_id'] and st.session_state['quiz_history']:
+        st.header("📊 履歴")
+        for i, log in enumerate(reversed(st.session_state['quiz_history'])):
+            d = log.get('date', '')
+            t = log.get('title', '無題')
+            s = log.get('score', 0)
+            btn_label = f"📅 {d}\n📝 {t}\n🎯 正解率: {s}%"
+
+            # ✅ 誤爆防止：履歴ボタン + ゴミ箱ボタンを横並び
+            c_hist, c_del = st.columns([8, 2])
+
+            with c_hist:
+                if st.button(btn_label, key=f"hist_{i}", use_container_width=True, type="secondary"):
+                    st.session_state['current_quiz'] = log['quiz_data']
+                    st.session_state['summary'] = log['summary_data']
+                    st.session_state['current_title'] = t
+                    st.session_state['current_date'] = log.get('date')
+                    st.session_state['edit_mode'] = False
+                    st.session_state['results'] = {}
+                    st.session_state['show_retry'] = False
+                    st.session_state['last_wrong_questions'] = []
+                    st.session_state['pending_delete'] = None
+                    st.rerun()
+
+            with c_del:
+                # 1段階目：削除候補にセット
+                if st.button("🗑️", key=f"del_hist_{i}", use_container_width=True):
+                    st.session_state['pending_delete'] = {"date": d, "title": t}
+                    st.rerun()
+
+            # 2段階目：確認UI（該当の履歴の直下に表示）
+            pending = st.session_state.get('pending_delete')
+            if pending and pending.get("date") == d:
+                st.warning(f"この履歴を削除しますか？\n\n📅 {d}\n📝 {t}")
+
+                c_yes, c_no = st.columns(2)
+                with c_yes:
+                    if st.button("✅ 削除する", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
+                        ok = delete_one_history_from_gs(st.session_state['user_id'], d)
+                        st.session_state['pending_delete'] = None
+                        if ok:
+                            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                            st.session_state['show_retry'] = False
+                            st.session_state['last_wrong_questions'] = []
+                            st.rerun()
+                        else:
+                            st.error("削除に失敗しました。")
+                with c_no:
+                    if st.button("キャンセル", key=f"cancel_del_{i}", use_container_width=True):
+                        st.session_state['pending_delete'] = None
+                        st.rerun()
+
+        st.markdown("---")
+        if st.button("🗑️ 履歴を全削除", use_container_width=True):
+            if clear_history_from_gs(st.session_state['user_id']):
+                st.session_state['quiz_history'] = []
+                st.session_state['pending_delete'] = None
+                st.rerun()
+
+# --- ここから追加の“壊れにくくする”関数（UI/構造は触らない） ---
+def parse_json_safely(res_text: str):
+    """LLM出力からJSONをできるだけ安全に抽出"""
+    t = (res_text or "").strip()
+    # コードブロック除去
+    t = t.replace("```json", "```").replace("```", "")
+    start = t.find("{")
+    end = t.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("JSONが見つかりません")
+    return json.loads(t[start:end+1])
+
+def norm_answer(s: str) -> str:
+    """採点用：表記ゆれを軽減（空白/記号/全角空白など）"""
+    s = str(s).strip().lower()
+    s = s.replace("　", "")
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("・", "").replace("、", "").replace("。", "")
+    return s
+
+# ✅ 追加：問題削除/追加後に入力ウィジェットをリセット
+def reset_quiz_input_widgets():
+    for k in list(st.session_state.keys()):
+        if k.startswith("r_") or k.startswith("t_"):
+            st.session_state.pop(k, None)
+    st.session_state['results'] = {}
+
+# --- AI処理 ---
+def get_available_model():
+    # 💡 指定のモデルリスト（全部入れた版）
+    candidates = [
+        'gemini-3-pro-preview',
+        'gemini-3-flash-preview',
+        'gemini-2.5-pro',
+        'gemini-2.5-pro-tts',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-preview',
+        'gemini-2.5-flash-image-preview',
+        'gemini-2.5-flash-tts',
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-flash-lite-preview',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-image',
+        'gemini-2.0-flash-lite',
+    ]
+
+    # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
+    cached = st.session_state.get("model_name")
+    if cached:
+        try:
+            return genai.GenerativeModel(cached)
+        except:
+            st.session_state["model_name"] = None
+
+    for m in candidates:
+        try:
+            mod = genai.GenerativeModel(m)
+            mod.generate_content("test", generation_config={"max_output_tokens": 1})
+            st.session_state["model_name"] = m
+            return mod
+        except:
+            continue
+    return None
+
+def generate_summary(files):
+    model = get_available_model()
+    if not model:
+        return None
+    content = ["資料の要点を、分かりやすく要約してください。"]
+    for f in files:
+        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
+    try:
+        with st.spinner("要約中..."):
+            return model.generate_content(content).text
+    except:
+        return None
+
+def start_quiz_generation(files):
+    model = get_available_model()
+    if not model:
+        return "無題", []
+    prompt = """PDFからクイズ10問をJSONで出力。
+【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
+    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
+    try:
+        with st.spinner("クイズ作成中..."):
+            res = model.generate_content(content).text
+            data = parse_json_safely(res)
+            return data.get("title", "無題"), data.get("quizzes", [])
+    except:
+        return "無題", []
+
+# --- メインロジック ---
+if uploaded_files:
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📝 資料を要約する", use_container_width=True):
+            st.session_state['summary'] = generate_summary(uploaded_files)
+    with c2:
+        if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
+            t, q = start_quiz_generation(uploaded_files)
+            st.session_state.update({"current_title": t, "current_quiz": q, "results": {}, "current_date": None, "edit_mode": False})
+            st.session_state['show_retry'] = False
+            st.session_state['last_wrong_questions'] = []
+            st.rerun()
+
+if st.session_state['summary']:
+    st.info(f"### 📋 要約\n{st.session_state['summary']}")
+
+if st.session_state['current_quiz']:
+    st.divider()
+
+    # 題名編集エリア
+    col_title, col_btn = st.columns([8, 2])
+    with col_title:
+        if st.session_state['edit_mode']:
+            new_title_input = st.text_input("題名編集", value=st.session_state['current_title'], label_visibility="collapsed")
+        else:
+            st.subheader(f"📖 {st.session_state['current_title']}")
+    with col_btn:
+        if st.session_state['edit_mode']:
+            if st.button("💾 保存", use_container_width=True):
+                if st.session_state['current_date'] and st.session_state['user_id']:
+                    update_title_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_title_input)
+                    st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                st.session_state['current_title'] = new_title_input
+                st.session_state['edit_mode'] = False
+                st.rerun()
+        else:
+            if st.button("✏️ 題名を変更", use_container_width=True):
+                st.session_state['edit_mode'] = True
+                st.rerun()
+
+    # ✅ 追加：問題削除 & 手動追加（ここだけ差し込み。既存は触らない）
+    with st.expander("🛠️ 問題の編集（削除 / 手動追加）", expanded=False):
+        # --- 削除UI ---
+        st.markdown("### 🗑️ 問題を削除（AIがミスった時）")
+        options = []
+        for i, q in enumerate(st.session_state['current_quiz']):
+            qtext = (q.get("question", "") or "").replace("\n", " ")
+            if len(qtext) > 30:
+                qtext = qtext[:30] + "..."
+            options.append(f"Q{i+1}: {qtext}")
+
+        del_selected = st.multiselect("削除する問題を選択", options, key="del_selected")
+
+        if st.button("🗑️ 選択した問題を削除", type="secondary", use_container_width=True, key="del_btn"):
+            idxs = []
+            for s in del_selected:
+                try:
+                    n = int(s.split(":")[0].replace("Q", "").strip())
+                    idxs.append(n - 1)
+                except:
+                    pass
+
+            idxs = sorted(set([i for i in idxs if 0 <= i < len(st.session_state['current_quiz'])]), reverse=True)
+            for i in idxs:
+                st.session_state['current_quiz'].pop(i)
+
+            reset_quiz_input_widgets()
+            st.session_state['show_retry'] = False
+            st.session_state['last_wrong_questions'] = []
+            st.rerun()
+
+        st.markdown("---")
+
+        # --- 手動追加UI ---
+        st.markdown("### ➕ 手動で問題を追加")
+        new_q = st.text_area("問題文", key="add_q_text", placeholder="例：刑法における故意とは何か説明せよ。", height=80)
+
+        mode = st.radio("形式", ["記述式（optionsなし）", "選択式（optionsあり）"], horizontal=True, key="add_mode")
+
+        new_opts = ""
+        if mode == "選択式（optionsあり）":
+            new_opts = st.text_area(
+                "選択肢（1行1つ / またはカンマ区切り）",
+                key="add_opts_text",
+                placeholder="A\nB\nC\nD\nまたは\nA, B, C, D",
+                height=90
+            )
+
+        new_ans = st.text_input("正解（answer）", key="add_ans_text", placeholder="例：未必の故意")
+        new_exp = st.text_area("解説（explanation）", key="add_exp_text", placeholder="解説を書いておくと復習が楽。", height=80)
+
+        if st.button("➕ この問題を追加", type="primary", use_container_width=True, key="add_btn"):
+            if not str(new_q).strip():
+                st.error("問題文が空です。")
+            elif not str(new_ans).strip():
+                st.error("正解（answer）が空です。")
+            else:
+                opts_list = []
+                if mode == "選択式（optionsあり）":
+                    raw = (new_opts or "").strip()
+                    if raw:
+                        if "\n" in raw:
+                            opts_list = [x.strip() for x in raw.splitlines() if x.strip()]
+                        else:
+                            opts_list = [x.strip() for x in raw.split(",") if x.strip()]
+
+                st.session_state['current_quiz'].append({
+                    "question": str(new_q).strip(),
+                    "options": opts_list if opts_list else [],
+                    "answer": str(new_ans).strip(),
+                    "explanation": str(new_exp).strip()
+                })
+
+                reset_quiz_input_widgets()
+                st.session_state['show_retry'] = False
+                st.session_state['last_wrong_questions'] = []
+                st.rerun()
+
+    # クイズフォーム
+    with st.form("quiz_form"):
+        for i, q in enumerate(st.session_state['current_quiz']):
+            question_text = q.get('question', '')
+            st.markdown(f"""
+            <div class="question-box">
+                <div class="question-number">Q{i+1}.</div>
+                <div class="question-text">{question_text}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            opts = q.get('options', [])
+            if opts and isinstance(opts, list) and len(opts) >= 2:
+                st.session_state['results'][i] = st.radio(
+                    f"答えを選択 (Q{i+1})", opts, key=f"r_{i}", label_visibility="collapsed"
+                )
+            else:
+                st.session_state['results'][i] = st.text_input(
+                    f"答えを入力 (Q{i+1})", key=f"t_{i}", label_visibility="collapsed", placeholder="回答を入力..."
+                )
+
+        submitted = st.form_submit_button("✅ 採点", type="primary")
+
+    # フォーム外処理
+    if submitted:
+        correct = 0
+        wrong_questions = []
+
+        for i, q in enumerate(st.session_state['current_quiz']):
+            ans = st.session_state['results'].get(i, "")
+
+            # 追加：表記ゆれ耐性（空白・記号など）
+            is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
+
+            # 正誤情報の記録（雨音の最新版と同じ）
+            st.session_state['current_quiz'][i]['user_ans'] = ans
+            st.session_state['current_quiz'][i]['is_correct'] = is_correct
+
+            if is_correct:
+                st.success(f"第{i+1}問: 正解")
+                correct += 1
+            else:
+                st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
+                wrong_questions.append(st.session_state['current_quiz'][i])
+
+            # ✅ 修正：解説をトグル（expander）ではなく常時表示
+            st.markdown("#### 解説")
+            st.write(q.get('explanation', ''))
+            st.markdown("---")
+
+        # 履歴保存
+        if st.session_state['user_id']:
+            new_log = {
+                "date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),
+                "title": st.session_state['current_title'],
+                "score": int((correct/len(st.session_state['current_quiz']))*100) if st.session_state['current_quiz'] else 0,
+                "correct": correct,
+                "total": len(st.session_state['current_quiz']),
+                "quiz_data": st.session_state['current_quiz'],
+                "summary_data": st.session_state['summary']
+            }
+            save_history_to_gs(st.session_state['user_id'], new_log)
+            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+
+        # 追加：採点後にその場でリトライを出す（rerunしない）
+        st.session_state['last_wrong_questions'] = wrong_questions
+        st.session_state['show_retry'] = True
+
+    # 💡【新機能】間違えた問題だけリトライ（採点後に表示して安定化）
+    if st.session_state.get('show_retry') and st.session_state.get('last_wrong_questions'):
+        wq = st.session_state['last_wrong_questions']
+        st.info(f"前回の結果：{len(wq)}問の間違いがありました。")
+        if st.button(f"🔥 間違えた{len(wq)}問だけでリベンジする", type="primary", use_container_width=True):
+            st.session_state['current_quiz'] = wq
+            st.session_state['current_title'] = st.session_state['current_title'] + " (リベンジ)"
+            st.session_state['results'] = {}
+            st.session_state['current_date'] = None
+            st.session_state['show_retry'] = False
+            st.session_state['last_wrong_questions'] = []
+            st.rerun()
