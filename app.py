@@ -155,6 +155,10 @@ if 'show_retry' not in st.session_state:
 if 'pending_delete' not in st.session_state:
     st.session_state['pending_delete'] = None
 
+# ✅ 追加：アーカイブ表示ON/OFF（デフォルトOFF）
+if 'show_archived' not in st.session_state:
+    st.session_state['show_archived'] = False
+
 # --- 🎨 CSS: デザイン設定 (修正版) ---
 st.markdown("""
     <style>
@@ -244,8 +248,14 @@ with st.sidebar:
     if st.session_state['user_id'] and st.session_state['quiz_history']:
         st.header("📊 履歴")
 
-        # ✅ 追加：アーカイブは非表示（データは残す）
-        visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
+        # ✅ 追加：アーカイブ表示ON/OFF
+        st.checkbox("アーカイブも表示", value=st.session_state.get("show_archived", False), key="show_archived")
+
+        # ✅ 変更：アーカイブはトグルで表示切替
+        if st.session_state.get("show_archived"):
+            visible_history = list(st.session_state['quiz_history'])
+        else:
+            visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
 
         for i, log in enumerate(reversed(visible_history)):
             d = log.get('date', '')
@@ -323,6 +333,28 @@ def norm_answer(s: str) -> str:
     s = re.sub(r"\s+", "", s)
     s = s.replace("・", "").replace("、", "").replace("。", "")
     return s
+
+# ✅ 追加：要約の「前置き」や「巨大見出し」を削除
+def clean_summary_output(text: str) -> str:
+    """要約出力の前置き・不要な巨大見出しを削る（UI/構造に触れない）"""
+    t = (text or "").strip()
+
+    # 1) よくある前置きを削除（はい/承知しました系）
+    t = re.sub(r'^(はい[、,]?\s*)?承知(いた|し)ました[。．]?\s*', '', t)
+    t = re.sub(r'^PDF資料を要約します[。．]?\s*', '', t)
+
+    # 2) 先頭に巨大タイトル(# 見出し)が来た場合は削除
+    #   例: "# 親子関係・結婚・離婚..." みたいなのを消す（後ろの # 要点 は残す）
+    lines = t.splitlines()
+    if lines:
+        first = lines[0].strip()
+        if first.startswith("#") and not re.match(r'^#\s*(要点|詳細メモ|キーワード|確認問題)\s*$', first):
+            lines = lines[1:]
+            while lines and not lines[0].strip():
+                lines = lines[1:]
+        t = "\n".join(lines).strip()
+
+    return t
 
 # ✅ 追加：問題削除/追加後に入力ウィジェットをリセット
 def reset_quiz_input_widgets():
@@ -417,7 +449,8 @@ def generate_with_continuation(model, content, generation_config, max_rounds=3):
             "今の出力の続きを、重複なしでそのまま出してください。見出しや箇条書きの体裁は維持してください。"
         ]
 
-    return "\n".join([p.strip() for p in text_parts if p.strip()]).strip()
+    # ✅ 変更：最後に要約の前置き/巨大見出しを除去
+    return clean_summary_output("\n".join([p.strip() for p in text_parts if p.strip()]).strip())
 
 # ✅ 追加（要約高速化のため）：同じ入力なら要約結果をキャッシュ
 @st.cache_data(show_spinner=False)
