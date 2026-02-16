@@ -73,7 +73,6 @@ def save_history_to_gs(user_id, log_entry):
         # ✅ 追加：archived列分を末尾に付与（新規は未アーカイブ）
         row.append("")   # ← False じゃなく空欄にする
 
-
         sheet.append_row(row)
     except Exception as e:
         st.error(f"保存エラー: {e}")
@@ -90,6 +89,43 @@ def update_title_in_gs(user_id, date_str, new_title):
                 return True
         return False
     except:
+        return False
+
+# ✅ 追加：採点しなくても「保存/上書き」できるようにする（user_id + date で upsert）
+def upsert_history_to_gs(user_id, log_entry):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        ensure_archived_column(sheet)
+
+        records = sheet.get_all_records()
+
+        # 同じ user_id + date の行を探す
+        target_row = None
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(log_entry.get("date")):
+                target_row = idx + 2  # ヘッダーの次行
+                break
+
+        values = [
+            user_id,
+            log_entry.get("date", ""),
+            log_entry.get("title", "無題"),
+            log_entry.get("score", 0),
+            log_entry.get("correct", 0),
+            log_entry.get("total", 0),
+            json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False),
+            log_entry.get("summary_data", "")
+        ]
+
+        if target_row:
+            sheet.update(f"A{target_row}:H{target_row}", [values])
+        else:
+            sheet.append_row(values + [""])  # archivedは空欄
+
+        return True
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
         return False
 
 def clear_history_from_gs(user_id):
@@ -402,12 +438,12 @@ if uploaded_files:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
             t, q = start_quiz_generation(uploaded_files)
             st.session_state.update({
-    "current_title": t,
-    "current_quiz": q,
-    "results": {},
-    "current_date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),  # ✅ ここだけ
-    "edit_mode": False
-})
+                "current_title": t,
+                "current_quiz": q,
+                "results": {},
+                "current_date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),  # ✅ ここだけ
+                "edit_mode": False
+            })
             st.session_state['show_retry'] = False
             st.session_state['last_wrong_questions'] = []
             st.rerun()
@@ -428,10 +464,22 @@ if st.session_state['current_quiz']:
     with col_btn:
         if st.session_state['edit_mode']:
             if st.button("💾 保存", use_container_width=True):
-                if st.session_state['current_date'] and st.session_state['user_id']:
-                    update_title_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_title_input)
-                    st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                # ✅ 採点しなくても「保存/上書き」
                 st.session_state['current_title'] = new_title_input
+
+                if st.session_state['current_date'] and st.session_state['user_id']:
+                    log = {
+                        "date": st.session_state['current_date'],
+                        "title": st.session_state['current_title'],
+                        "score": 0,
+                        "correct": 0,
+                        "total": len(st.session_state['current_quiz']) if st.session_state['current_quiz'] else 0,
+                        "quiz_data": st.session_state['current_quiz'] or [],
+                        "summary_data": st.session_state.get("summary") or ""
+                    }
+                    upsert_history_to_gs(st.session_state['user_id'], log)
+                    st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+
                 st.session_state['edit_mode'] = False
                 st.rerun()
         else:
@@ -680,10 +728,10 @@ if st.session_state['current_quiz']:
             st.write(q.get('explanation', ''))
             st.markdown("---")
 
-        # 履歴保存
+        # 履歴保存（✅ ここを upsert にして、題名保存で作った行に上書き）
         if st.session_state['user_id']:
             new_log = {
-                "date": datetime.now(JST).strftime("%Y/%m/%d %H:%M"),
+                "date": st.session_state['current_date'],  # ✅ current_date を使う
                 "title": st.session_state['current_title'],
                 "score": int((correct/len(st.session_state['current_quiz']))*100) if st.session_state['current_quiz'] else 0,
                 "correct": correct,
@@ -691,7 +739,7 @@ if st.session_state['current_quiz']:
                 "quiz_data": st.session_state['current_quiz'],
                 "summary_data": st.session_state['summary']
             }
-            save_history_to_gs(st.session_state['user_id'], new_log)
+            upsert_history_to_gs(st.session_state['user_id'], new_log)  # ✅ upsert
             st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
 
         # 追加：採点後にその場でリトライを出す（rerunしない）
