@@ -488,36 +488,20 @@ def start_quiz_generation(files):
 # --- メインロジック ---
 if uploaded_files:
     c1, c2 = st.columns(2)
+
+    # ===== 要約 =====
     with c1:
         if st.button("📝 資料を要約する", use_container_width=True):
             st.session_state['summary'] = generate_summary(uploaded_files)
 
-            # ✅ 追加：要約が作成された時点で「行を作る」
-            if st.session_state.get('user_id') and st.session_state.get('summary'):
-                # 既に作成済み（current_dateがある）なら上書き、無ければ新規作成
-                if not st.session_state.get('current_date'):
-                    st.session_state['current_date'] = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
-
-                # タイトルは今のまま（無題のクイズでもOK：ユーザーが後で変える想定）
-                init_log = {
-                    "date": st.session_state['current_date'],
-                    "title": st.session_state.get('current_title', "無題"),
-                    "score": "",
-                    "correct": "",
-                    "total": "",
-                    "quiz_data": st.session_state.get('current_quiz') or [],
-                    "summary_data": st.session_state.get('summary') or ""
-                }
-                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], init_log)
-                st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
-
+    # ===== クイズ生成 =====
     with c2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
+
             t, q = start_quiz_generation(uploaded_files)
 
-            # まだ日付がなければ最初だけ作る
-            if not st.session_state.get('current_date'):
-                st.session_state['current_date'] = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+            # 🔥 毎回必ず新しい履歴として作る（上書き防止）
+            st.session_state['current_date'] = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
 
             st.session_state.update({
                 "current_title": t,
@@ -529,22 +513,26 @@ if uploaded_files:
             st.session_state['show_retry'] = False
             st.session_state['last_wrong_questions'] = []
 
+            # ===== 履歴に新規追加 =====
             if st.session_state.get('user_id'):
                 init_log = {
                     "date": st.session_state['current_date'],
-                    "title": st.session_state.get('current_title', "無題"),
+                    "title": t,
                     "score": "",
                     "correct": "",
                     "total": "",
-                    "quiz_data": st.session_state.get('current_quiz') or [],
+                    "quiz_data": q,
                     "summary_data": st.session_state.get('summary') or ""
                 }
-                upsert_history_in_gs(
+
+                save_history_to_gs(
                     st.session_state['user_id'],
-                    st.session_state['current_date'],
                     init_log
                 )
-                st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+
+                st.session_state['quiz_history'] = load_history_from_gs(
+                    st.session_state['user_id']
+                )
 
             st.rerun()
 
