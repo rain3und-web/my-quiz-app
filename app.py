@@ -731,71 +731,90 @@ if st.session_state['current_quiz']:
         submitted = st.form_submit_button("✅ 採点", type="primary")
 
     # フォーム外処理
-    if submitted:
+if submitted:
+    correct = 0
+    wrong_questions = []
+
+    for i, q in enumerate(st.session_state['current_quiz']):
+        ans = st.session_state['results'].get(i, "")
+
+        # 追加：表記ゆれ耐性（空白・記号など）
+        is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
+
+        # 正誤情報の記録（雨音の最新版と同じ）
+        st.session_state['current_quiz'][i]['user_ans'] = ans
+        st.session_state['current_quiz'][i]['is_correct'] = is_correct
+
+        if is_correct:
+            st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
+            correct += 1
+        else:
+            st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
+            wrong_questions.append(st.session_state['current_quiz'][i])
+
+        # ✅ 解説は常時表示
+        st.markdown("#### 解説")
+        st.write(q.get('explanation', ''))
+        st.markdown("---")
+
+    # ===== 🔥 採点サマリー表示（ここ追加）=====
+    total = len(st.session_state['current_quiz'])
+    score = int((correct / total) * 100) if total else 0
+
+    st.divider()
+    st.subheader("📊 採点結果")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("正解数", f"{correct} / {total}")
+    with col2:
+        st.metric("正解率", f"{score}%")
+
+    st.progress(score / 100)
+
+    # 🎉 演出（ここに移動）
+    if score == 100:
         st.balloons()
-        correct = 0
-        wrong_questions = []
+    elif score >= 70:
+        st.snow()
 
-        for i, q in enumerate(st.session_state['current_quiz']):
-            ans = st.session_state['results'].get(i, "")
+    st.divider()
+    # ===== 🔥 追加ここまで =====
 
-            # 追加：表記ゆれ耐性（空白・記号など）
-            is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
+    # 履歴保存
+    if st.session_state['user_id']:
+        date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
 
-            # 正誤情報の記録（雨音の最新版と同じ）
-            st.session_state['current_quiz'][i]['user_ans'] = ans
-            st.session_state['current_quiz'][i]['is_correct'] = is_correct
+        new_log = {
+            "date": date_key,
+            "title": st.session_state['current_title'],
+            "score": score,
+            "correct": correct,
+            "total": total,
+            "quiz_data": st.session_state['current_quiz'],
+            "summary_data": st.session_state['summary']
+        }
 
-            if is_correct:
-                st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
-                correct += 1
-            else:
-                st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
-                wrong_questions.append(st.session_state['current_quiz'][i])
+        if st.session_state.get('current_date'):
+            upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
+        else:
+            save_history_to_gs(st.session_state['user_id'], new_log)
 
-            # ✅ 解説は常時表示
-            st.markdown("#### 解説")
-            st.write(q.get('explanation', ''))
-            st.markdown("---")
+        st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
 
-        # 履歴保存
-        if st.session_state['user_id']:
-            # ✅ 採点は「上書き保存」
-            # ただしリベンジは current_date=None のままなので、従来通り採点時に新規作成になる
-            date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+    # 追加：採点後にその場でリトライを出す（rerunしない）
+    st.session_state['last_wrong_questions'] = wrong_questions
+    st.session_state['show_retry'] = True
 
-            new_log = {
-                "date": date_key,
-                "title": st.session_state['current_title'],
-                "score": int((correct/len(st.session_state['current_quiz']))*100) if st.session_state['current_quiz'] else 0,
-                "correct": correct,
-                "total": len(st.session_state['current_quiz']),
-                "quiz_data": st.session_state['current_quiz'],
-                "summary_data": st.session_state['summary']
-            }
-
-            # ✅ 生成済み（current_dateあり）なら上書き。リベンジは current_date=None なので append 相当になる
-            if st.session_state.get('current_date'):
-                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
-            else:
-                # 従来通り：リベンジは採点時に新規作成
-                save_history_to_gs(st.session_state['user_id'], new_log)
-
-            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
-
-        # 追加：採点後にその場でリトライを出す（rerunしない）
-        st.session_state['last_wrong_questions'] = wrong_questions
-        st.session_state['show_retry'] = True
-
-    # 💡【新機能】間違えた問題だけリトライ（採点後に表示して安定化）
-    if st.session_state.get('show_retry') and st.session_state.get('last_wrong_questions'):
-        wq = st.session_state['last_wrong_questions']
-        st.info(f"前回の結果：{len(wq)}問の間違いがありました。")
-        if st.button(f"🔥 間違えた{len(wq)}問だけでリベンジする", type="primary", use_container_width=True):
-            st.session_state['current_quiz'] = wq
-            st.session_state['current_title'] = st.session_state['current_title'] + " (リベンジ)"
-            st.session_state['results'] = {}
-            st.session_state['current_date'] = None
-            st.session_state['show_retry'] = False
-            st.session_state['last_wrong_questions'] = []
-            st.rerun()
+# 💡【新機能】間違えた問題だけリトライ（採点後に表示して安定化）
+if st.session_state.get('show_retry') and st.session_state.get('last_wrong_questions'):
+    wq = st.session_state['last_wrong_questions']
+    st.info(f"前回の結果：{len(wq)}問の間違いがありました。")
+    if st.button(f"🔥 間違えた{len(wq)}問だけでリベンジする", type="primary", use_container_width=True):
+        st.session_state['current_quiz'] = wq
+        st.session_state['current_title'] = st.session_state['current_title'] + " (リベンジ)"
+        st.session_state['results'] = {}
+        st.session_state['current_date'] = None
+        st.session_state['show_retry'] = False
+        st.session_state['last_wrong_questions'] = []
+        st.rerun()
