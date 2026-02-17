@@ -707,7 +707,7 @@ if st.session_state['current_quiz']:
                 st.session_state['last_wrong_questions'] = []
                 st.rerun()
 
-    # クイズフォーム
+        # クイズフォーム
     with st.form("quiz_form"):
         for i, q in enumerate(st.session_state['current_quiz']):
             question_text = q.get('question', '')
@@ -730,7 +730,7 @@ if st.session_state['current_quiz']:
 
         submitted = st.form_submit_button("✅ 採点", type="primary")
 
-    # フォーム外処理
+    # ===== フォーム外処理 =====
     if submitted:
         correct = 0
         wrong_questions = []
@@ -754,7 +754,7 @@ if st.session_state['current_quiz']:
             st.write(q.get('explanation', ''))
             st.markdown("---")
 
-        # 🔥 ここも if の中
+        # ===== 採点サマリー =====
         total = len(st.session_state['current_quiz'])
         score = int((correct / total) * 100) if total else 0
 
@@ -776,32 +776,33 @@ if st.session_state['current_quiz']:
 
         st.divider()
 
-    # 履歴保存
-    if st.session_state['user_id']:
-        date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+        # ===== 履歴保存（必ず if の中）=====
+        if st.session_state['user_id']:
+            date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
 
-        new_log = {
-            "date": date_key,
-            "title": st.session_state['current_title'],
-            "score": score,
-            "correct": correct,
-            "total": total,
-            "quiz_data": st.session_state['current_quiz'],
-            "summary_data": st.session_state['summary']
-        }
+            new_log = {
+                "date": date_key,
+                "title": st.session_state['current_title'],
+                "score": score,
+                "correct": correct,
+                "total": total,
+                "quiz_data": st.session_state['current_quiz'],
+                "summary_data": st.session_state['summary']
+            }
 
-        if st.session_state.get('current_date'):
-            upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
-        else:
-            save_history_to_gs(st.session_state['user_id'], new_log)
+            if st.session_state.get('current_date'):
+                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
+            else:
+                save_history_to_gs(st.session_state['user_id'], new_log)
 
-        st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
 
-    # 追加：採点後にその場でリトライを出す（rerunしない）
-    st.session_state['last_wrong_questions'] = wrong_questions
-    st.session_state['show_retry'] = True
+        # ===== リトライ準備も if の中 =====
+        st.session_state['last_wrong_questions'] = wrong_questions
+        st.session_state['show_retry'] = True
 
-# 💡【新機能】間違えた問題だけリトライ（採点後に表示して安定化）
+
+# 💡【間違えた問題だけリトライ】
 if st.session_state.get('show_retry') and st.session_state.get('last_wrong_questions'):
     wq = st.session_state['last_wrong_questions']
     st.info(f"前回の結果：{len(wq)}問の間違いがありました。")
