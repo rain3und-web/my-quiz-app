@@ -732,8 +732,8 @@ if st.session_state['current_quiz']:
 
     # フォーム外処理
     if submitted:
-    correct = 0
-    wrong_questions = []
+        correct = 0
+        wrong_questions = []
 
     for i, q in enumerate(st.session_state['current_quiz']):
         ans = st.session_state['results'].get(i, "")
