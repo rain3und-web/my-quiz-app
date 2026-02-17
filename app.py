@@ -730,27 +730,25 @@ if st.session_state['current_quiz']:
 
         submitted = st.form_submit_button("✅ 採点", type="primary")
 
-    # フォーム外処理
+        # フォーム外処理
     if submitted:
         correct = 0
         wrong_questions = []
 
-    for i, q in enumerate(st.session_state['current_quiz']):
-        ans = st.session_state['results'].get(i, "")
+        for i, q in enumerate(st.session_state['current_quiz']):
+            ans = st.session_state['results'].get(i, "")
 
-        # 追加：表記ゆれ耐性（空白・記号など）
-        is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
+            is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
 
-        # 正誤情報の記録（雨音の最新版と同じ）
-        st.session_state['current_quiz'][i]['user_ans'] = ans
-        st.session_state['current_quiz'][i]['is_correct'] = is_correct
+            st.session_state['current_quiz'][i]['user_ans'] = ans
+            st.session_state['current_quiz'][i]['is_correct'] = is_correct
 
-        if is_correct:
-            st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
-            correct += 1
-        else:
-            st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
-            wrong_questions.append(st.session_state['current_quiz'][i])
+            if is_correct:
+                st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
+                correct += 1
+            else:
+                st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
+                wrong_questions.append(st.session_state['current_quiz'][i])
 
         # ✅ 解説は常時表示
         st.markdown("#### 解説")
