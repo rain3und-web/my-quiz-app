@@ -125,6 +125,25 @@ def archive_one_history_in_gs(user_id, date_str):
     except:
         return False
 
+# 👇 ここを追加（入れ替えじゃない）
+def restore_one_history_in_gs(user_id, date_str):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("study_history_db").sheet1
+        ensure_archived_column(sheet)
+
+        headers = sheet.row_values(1)
+        archived_col = headers.index("archived") + 1
+
+        records = sheet.get_all_records()
+        for idx, r in enumerate(records):
+            if str(r.get("user_id")) == str(user_id) and str(r.get("date")) == str(date_str):
+                sheet.update_cell(idx + 2, archived_col, "")
+                return True
+        return False
+    except:
+        return False
+
 # ✅ 追加：生成時点で「作成」、以後は同じ行を「上書き」する（採点もここで上書き）
 def upsert_history_in_gs(user_id, date_str, log_entry):
     """
@@ -277,73 +296,105 @@ with st.sidebar:
 
         # ✅ 入れ替え：後に履歴
     if st.session_state['user_id'] and st.session_state['quiz_history']:
-        st.header("📊 履歴")
+    st.header("📊 履歴")
 
-        # ✅ 追加：アーカイブ表示オン/オフ（UI追加はこれだけ）
-        show_archived = st.checkbox("アーカイブ表示", value=False)
+    show_archived = st.checkbox("アーカイブ表示", value=False)
 
-        # ✅ 既存の挙動はそのまま：デフォルトは非表示、ONの時だけ全部表示
-        if show_archived:
-            visible_history = st.session_state['quiz_history']
-        else:
-            visible_history = [h for h in st.session_state['quiz_history'] if not h.get("archived", False)]
+    if show_archived:
+        visible_history = st.session_state['quiz_history']
+    else:
+        visible_history = [
+            h for h in st.session_state['quiz_history']
+            if not h.get("archived", False)
+        ]
 
-        for i, log in enumerate(reversed(visible_history)):
-            d = log.get('date', '')
-            t = log.get('title', '無題')
-            s = log.get('score', 0)
-            btn_label = f"📅 {d}\n📝 {t}\n🎯 正解率: {s}%"
+    for i, log in enumerate(reversed(visible_history)):
+        d = log.get('date', '')
+        t = log.get('title', '無題')
+        s = log.get('score', 0)
+        archived_flag = log.get("archived", False)
 
-            # ✅ 誤爆防止：履歴ボタン + ゴミ箱ボタンを横並び（※UIはそのまま、動作だけアーカイブ）
-            c_hist, c_del = st.columns([8, 2])
+        btn_label = f"📅 {d}\n📝 {t}\n🎯 正解率: {s}%"
 
-            with c_hist:
-                if st.button(btn_label, key=f"hist_{i}", use_container_width=True, type="secondary"):
-                    st.session_state['current_quiz'] = log['quiz_data']
-                    st.session_state['summary'] = log['summary_data']
-                    st.session_state['current_title'] = t
-                    st.session_state['current_date'] = log.get('date')
-                    st.session_state['edit_mode'] = False
-                    st.session_state['results'] = {}
-                    st.session_state['show_retry'] = False
-                    st.session_state['last_wrong_questions'] = []
-                    st.session_state['pending_delete'] = None
-                    st.rerun()
+        c_hist, c_del = st.columns([8, 2])
 
-            with c_del:
-                # 1段階目：アーカイブ候補にセット
-                if st.button("✔️", key=f"del_hist_{i}", use_container_width=True):
-                    st.session_state['pending_delete'] = {"date": d, "title": t}
-                    st.rerun()
+        # 履歴読み込み
+        with c_hist:
+            if st.button(btn_label, key=f"hist_{i}", use_container_width=True, type="secondary"):
+                st.session_state['current_quiz'] = log['quiz_data']
+                st.session_state['summary'] = log['summary_data']
+                st.session_state['current_title'] = t
+                st.session_state['current_date'] = d
+                st.session_state['edit_mode'] = False
+                st.session_state['results'] = {}
+                st.session_state['show_retry'] = False
+                st.session_state['last_wrong_questions'] = []
+                st.session_state['pending_delete'] = None
+                st.rerun()
 
-            # 2段階目：確認UI（該当の履歴の直下に表示）
-            pending = st.session_state.get('pending_delete')
-            if pending and pending.get("date") == d:
-                st.warning(f"この履歴をアーカイブしますか？（非表示になりますがデータは残ります）\n\n📅 {d}\n📝 {t}")
+        # 操作ボタン
+        with c_del:
+            if st.button("✔️", key=f"del_hist_{i}", use_container_width=True):
+                st.session_state['pending_delete'] = {"date": d, "title": t}
+                st.rerun()
 
-                c_yes, c_no = st.columns(2)
-                with c_yes:
-                    if st.button("アーカイブ", key=f"confirm_del_{i}", use_container_width=True, type="primary"):
+        # 確認UI
+        pending = st.session_state.get('pending_delete')
+        if pending and pending.get("date") == d:
+            st.warning(f"この履歴をどうしますか？\n\n📅 {d}\n📝 {t}")
+
+            c_arch, c_delete, c_cancel = st.columns(3)
+
+            # アーカイブ
+            with c_arch:
+                if not archived_flag:
+                    if st.button("📦 アーカイブ", key=f"archive_{i}", use_container_width=True):
                         ok = archive_one_history_in_gs(st.session_state['user_id'], d)
                         st.session_state['pending_delete'] = None
                         if ok:
                             st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
-                            st.session_state['show_retry'] = False
-                            st.session_state['last_wrong_questions'] = []
                             st.rerun()
                         else:
                             st.error("アーカイブに失敗しました。")
-                with c_no:
-                    if st.button("キャンセル", key=f"cancel_del_{i}", use_container_width=True):
+                else:
+                    if st.button("♻️ 復活", key=f"restore_{i}", use_container_width=True):
+                        ok = restore_one_history_in_gs(st.session_state['user_id'], d)
                         st.session_state['pending_delete'] = None
-                        st.rerun()
+                        if ok:
+                            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                            st.rerun()
+                        else:
+                            st.error("復活に失敗しました。")
 
-        st.markdown("---")
-        if st.button("🗑️ 履歴を全削除", use_container_width=True):
-            if clear_history_from_gs(st.session_state['user_id']):
-                st.session_state['quiz_history'] = []
-                st.session_state['pending_delete'] = None
-                st.rerun()
+            # 完全削除
+            with c_delete:
+                if st.button("🗑️ 完全削除", key=f"delete_{i}", use_container_width=True):
+                    client = get_gspread_client()
+                    sheet = client.open("study_history_db").sheet1
+                    records = sheet.get_all_records()
+
+                    for idx2, r2 in enumerate(records):
+                        if str(r2.get("user_id")) == str(st.session_state['user_id']) and str(r2.get("date")) == str(d):
+                            sheet.delete_rows(idx2 + 2)
+                            break
+
+                    st.session_state['pending_delete'] = None
+                    st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+                    st.rerun()
+
+            # キャンセル
+            with c_cancel:
+                if st.button("キャンセル", key=f"cancel_{i}", use_container_width=True):
+                    st.session_state['pending_delete'] = None
+                    st.rerun()
+
+    st.markdown("---")
+
+    if st.button("🗑️ 履歴を全削除", use_container_width=True):
+        if clear_history_from_gs(st.session_state['user_id']):
+            st.session_state['quiz_history'] = []
+            st.session_state['pending_delete'] = None
+            st.rerun()
 
 # --- ここから追加の“壊れにくくする”関数（UI/構造は触らない） ---
 def parse_json_safely(res_text: str):
