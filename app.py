@@ -334,7 +334,7 @@ with st.sidebar:
 
             # 操作ボタン
             with c_del:
-                if st.button("✔️", key=f"del_hist_{i}", use_container_width=True):
+                if st.button("📂", key=f"del_hist_{i}", use_container_width=True):
                     st.session_state['pending_delete'] = {"date": d, "title": t}
                     st.rerun()
 
