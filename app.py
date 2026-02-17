@@ -821,10 +821,12 @@ if st.session_state['current_quiz']:
 
         # ===== 履歴保存（必ず if の中）=====
         if st.session_state['user_id']:
-            date_key = st.session_state.get('current_date') or datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+
+            # 🔥 解き直すたびに日付を「今」に更新
+            new_date = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
 
             new_log = {
-                "date": date_key,
+                "date": new_date,
                 "title": st.session_state['current_title'],
                 "score": score,
                 "correct": correct,
@@ -833,12 +835,25 @@ if st.session_state['current_quiz']:
                 "summary_data": st.session_state['summary']
             }
 
+            # 以前の日付があればアーカイブ
             if st.session_state.get('current_date'):
-                upsert_history_in_gs(st.session_state['user_id'], st.session_state['current_date'], new_log)
-            else:
-                save_history_to_gs(st.session_state['user_id'], new_log)
+                archive_one_history_in_gs(
+                    st.session_state['user_id'],
+                    st.session_state['current_date']
+                )
 
-            st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
+            # 新しい日付で保存
+            save_history_to_gs(
+                st.session_state['user_id'],
+                new_log
+            )
+
+            # セッションの日付も更新
+            st.session_state['current_date'] = new_date
+
+            st.session_state['quiz_history'] = load_history_from_gs(
+                st.session_state['user_id']
+            )
 
         # ===== リトライ準備も if の中 =====
         st.session_state['last_wrong_questions'] = wrong_questions
@@ -849,9 +864,15 @@ if st.session_state['current_quiz']:
 if st.session_state.get('show_retry') and st.session_state.get('last_wrong_questions'):
     wq = st.session_state['last_wrong_questions']
     st.info(f"前回の結果：{len(wq)}問の間違いがありました。")
-    if st.button(f"🔥 間違えた{len(wq)}問だけでリベンジする", type="primary", use_container_width=True):
+    if st.button(
+        f"🔥 間違えた{len(wq)}問だけでリベンジする",
+        type="primary",
+        use_container_width=True
+    ):
         st.session_state['current_quiz'] = wq
-        st.session_state['current_title'] = st.session_state['current_title'] + " (リベンジ)"
+        st.session_state['current_title'] = (
+            st.session_state['current_title'] + " (リベンジ)"
+        )
         st.session_state['results'] = {}
         st.session_state['current_date'] = None
         st.session_state['show_retry'] = False
