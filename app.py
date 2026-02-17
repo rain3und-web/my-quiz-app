@@ -348,7 +348,7 @@ with st.sidebar:
                 # アーカイブ or 復活
                 with c_arch:
                     if not archived_flag:
-                        if st.button("📦 アーカイブ", key=f"archive_{i}", use_container_width=True):
+                        if st.button("アーカイブ", key=f"archive_{i}", use_container_width=True):
                             ok = archive_one_history_in_gs(st.session_state['user_id'], d)
                             st.session_state['pending_delete'] = None
                             if ok:
@@ -357,7 +357,7 @@ with st.sidebar:
                             else:
                                 st.error("アーカイブに失敗しました。")
                     else:
-                        if st.button("♻️ 復活", key=f"restore_{i}", use_container_width=True):
+                        if st.button("復活", key=f"restore_{i}", use_container_width=True):
                             ok = restore_one_history_in_gs(st.session_state['user_id'], d)
                             st.session_state['pending_delete'] = None
                             if ok:
@@ -368,7 +368,7 @@ with st.sidebar:
 
                 # 完全削除
                 with c_delete:
-                    if st.button("🗑️ 完全削除", key=f"delete_{i}", use_container_width=True):
+                    if st.button("完全削除", key=f"delete_{i}", use_container_width=True):
                         client = get_gspread_client()
                         sheet = client.open("study_history_db").sheet1
                         records = sheet.get_all_records()
