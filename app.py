@@ -731,7 +731,7 @@ if st.session_state['current_quiz']:
         submitted = st.form_submit_button("✅ 採点", type="primary")
 
     # フォーム外処理
-if submitted:
+    if submitted:
     correct = 0
     wrong_questions = []
 
