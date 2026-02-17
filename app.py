@@ -830,9 +830,7 @@ if st.session_state['current_quiz']:
 
         if score == 100:
             st.balloons()
-        elif score >= 70:
-            st.snow()
-
+        
         st.divider()
 
         # ===== 履歴保存（必ず if の中）=====
