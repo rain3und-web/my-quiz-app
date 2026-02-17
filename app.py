@@ -730,7 +730,7 @@ if st.session_state['current_quiz']:
 
         submitted = st.form_submit_button("✅ 採点", type="primary")
 
-        # フォーム外処理
+    # フォーム外処理
     if submitted:
         correct = 0
         wrong_questions = []
@@ -750,34 +750,31 @@ if st.session_state['current_quiz']:
                 st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
                 wrong_questions.append(st.session_state['current_quiz'][i])
 
-        # ✅ 解説は常時表示
-        st.markdown("#### 解説")
-        st.write(q.get('explanation', ''))
-        st.markdown("---")
+            st.markdown("#### 解説")
+            st.write(q.get('explanation', ''))
+            st.markdown("---")
 
-    # ===== 🔥 採点サマリー表示（ここ追加）=====
-    total = len(st.session_state['current_quiz'])
-    score = int((correct / total) * 100) if total else 0
+        # 🔥 ここも if の中
+        total = len(st.session_state['current_quiz'])
+        score = int((correct / total) * 100) if total else 0
 
-    st.divider()
-    st.subheader("📊 採点結果")
+        st.divider()
+        st.subheader("📊 採点結果")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("正解数", f"{correct} / {total}")
-    with col2:
-        st.metric("正解率", f"{score}%")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("正解数", f"{correct} / {total}")
+        with col2:
+            st.metric("正解率", f"{score}%")
 
-    st.progress(score / 100)
+        st.progress(score / 100)
 
-    # 🎉 演出（ここに移動）
-    if score == 100:
-        st.balloons()
-    elif score >= 70:
-        st.snow()
+        if score == 100:
+            st.balloons()
+        elif score >= 70:
+            st.snow()
 
-    st.divider()
-    # ===== 🔥 追加ここまで =====
+        st.divider()
 
     # 履歴保存
     if st.session_state['user_id']:
