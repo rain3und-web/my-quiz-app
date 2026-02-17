@@ -448,7 +448,6 @@ def get_available_model():
     for m in candidates:
         try:
             mod = genai.GenerativeModel(m)
-            mod.generate_content("test", generation_config={"max_output_tokens": 1})
             st.session_state["model_name"] = m
             return mod
         except:
@@ -535,7 +534,6 @@ if uploaded_files:
                 )
 
             st.rerun()
-
 if st.session_state['summary']:
     st.info(f"### 📋 要約\n{st.session_state['summary']}")
 
