@@ -423,63 +423,102 @@ def reset_quiz_input_widgets():
             st.session_state.pop(k, None)
     st.session_state['results'] = {}
 
-# --- AI処理 ---
-def get_available_model():
-    # 💡 指定のモデルリスト（全部入れた版）
-    candidates = [
-        'gemini-3-pro-preview',
-        'gemini-3-flash-preview',
-        'gemini-2.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-preview',
-        'gemini-2.5-flash-lite',
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-    ]
+# --- AI処理（🔥高速版 完全差し替え）---
 
-    # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
-    cached = st.session_state.get("model_name")
-    if cached:
-        try:
-            return genai.GenerativeModel(cached)
-        except:
-            st.session_state["model_name"] = None
+import fitz  # PyMuPDF
 
-    for m in candidates:
+MAX_TEXT_LENGTH = 15000   # ← ここで制限（大きいPDFでも安定）
+
+def extract_text_from_pdfs(files):
+    """PDFからテキストだけ抽出（高速化の核心）"""
+    full_text = ""
+
+    for f in files:
         try:
-            mod = genai.GenerativeModel(m)
-            st.session_state["model_name"] = m
-            return mod
+            with fitz.open(stream=f.getvalue(), filetype="pdf") as doc:
+                for page in doc:
+                    full_text += page.get_text()
         except:
             continue
-    return None
+
+    # 🔥 文字数制限（超重要）
+    return full_text[:MAX_TEXT_LENGTH]
+
+
+def get_available_model():
+    """
+    🔥 モデル探索をやめる
+    最初から軽量高速モデル固定
+    """
+    try:
+        return genai.GenerativeModel("gemini-2.5-flash")
+    except:
+        return None
+
 
 def generate_summary(files):
     model = get_available_model()
     if not model:
         return None
-    content = ["資料の要点を、分かりやすく要約してください。"]
-    for f in files:
-        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
+
+    pdf_text = extract_text_from_pdfs(files)
+
+    if not pdf_text.strip():
+        return "テキスト抽出に失敗しました。"
+
+    prompt = f"""
+以下のテキストを分かりやすく要約してください。
+
+{pdf_text}
+"""
+
     try:
         with st.spinner("要約中..."):
-            return model.generate_content(content).text
+            res = model.generate_content(prompt)
+            return res.text
     except:
         return None
+
 
 def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-    prompt = """PDFからクイズ10問をJSONで出力。
-【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
-【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
-{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
-    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
+
+    pdf_text = extract_text_from_pdfs(files)
+
+    if not pdf_text.strip():
+        return "無題", []
+
+    prompt = f"""
+以下のテキストからクイズ10問をJSONで出力せよ。
+
+【重要】
+・記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること
+・出力はJSONのみ
+・説明文やコードブロックは禁止
+
+形式：
+{{
+  "title": "タイトル",
+  "quizzes": [
+    {{
+      "question": "...",
+      "options": ["...", "..."],
+      "answer": "...",
+      "explanation": "..."
+    }}
+  ]
+}}
+
+テキスト：
+{pdf_text}
+"""
+
     try:
         with st.spinner("クイズ作成中..."):
-            res = model.generate_content(content).text
-            data = parse_json_safely(res)
+            res = model.generate_content(prompt)
+            data = parse_json_safely(res.text)
             return data.get("title", "無題"), data.get("quizzes", [])
     except:
         return "無題", []
