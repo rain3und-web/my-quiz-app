@@ -6,7 +6,6 @@ import re
 from datetime import datetime, timedelta, timezone
 from google.oauth2.service_account import Credentials
 import gspread
-import fitz
 
 # --- 画面設定 ---
 st.set_page_config(page_title="PDF要約＆クイズ生成ツール", page_icon="🎓", layout="wide")
@@ -424,74 +423,62 @@ def reset_quiz_input_widgets():
             st.session_state.pop(k, None)
     st.session_state['results'] = {}
 
-# --- AI処理（高速テキスト抽出版） ---
-
-def extract_text_from_pdf(file):
-    text = ""
-    with fitz.open(stream=file.getvalue(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
-
-
+# --- AI処理 ---
 def get_available_model():
-    try:
-        return genai.GenerativeModel("gemini-2.5-flash")
-    except:
-        return None
+    # 💡 指定のモデルリスト（全部入れた版）
+    candidates = [
+        'gemini-3-pro-preview',
+        'gemini-3-flash-preview',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-preview',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+    ]
 
+    # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
+    cached = st.session_state.get("model_name")
+    if cached:
+        try:
+            return genai.GenerativeModel(cached)
+        except:
+            st.session_state["model_name"] = None
+
+    for m in candidates:
+        try:
+            mod = genai.GenerativeModel(m)
+            st.session_state["model_name"] = m
+            return mod
+        except:
+            continue
+    return None
 
 def generate_summary(files):
     model = get_available_model()
-    if not model or not files:
+    if not model:
         return None
-
-    text = extract_text_from_pdf(files[0])
-
-    prompt = f"""
-以下の資料をわかりやすく要約してください。
-
-{text}
-"""
-
+    content = ["資料の要点を、分かりやすく要約してください。"]
+    for f in files:
+        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
     try:
         with st.spinner("要約中..."):
-            return model.generate_content(prompt).text
+            return model.generate_content(content).text
     except:
         return None
-
 
 def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-
-    # 🔥 要約をベースにする
-    if st.session_state.get("summary"):
-        base_text = st.session_state["summary"]
-    else:
-        base_text = generate_summary(files)
-        if not base_text:
-            return "無題", []
-
-    prompt = f"""
-以下の要約内容をもとに、理解度を確認するクイズ10問を作成してください。
-
-【重要】
-・記述式は options を []
-・JSONのみ出力
-・説明文は禁止
-
-形式：
-{{"title":"タイトル","quizzes":[{{"question":"...","options":["..."],"answer":"...","explanation":"..."}}]}}
-
-要約：
-{base_text}
-"""
-
+    prompt = """PDFからクイズ10問をJSONで出力。
+【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
+    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
     try:
         with st.spinner("クイズ作成中..."):
-            res = model.generate_content(prompt).text
+            res = model.generate_content(content).text
             data = parse_json_safely(res)
             return data.get("title", "無題"), data.get("quizzes", [])
     except:
