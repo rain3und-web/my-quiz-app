@@ -423,56 +423,59 @@ def reset_quiz_input_widgets():
             st.session_state.pop(k, None)
     st.session_state['results'] = {}
 
-# --- AI処理（Cloud安定高速版）---
-
+# --- AI処理 ---
 def get_available_model():
-    try:
-        return genai.GenerativeModel("gemini-2.5-flash")
-    except:
-        return None
+    # 💡 指定のモデルリスト（全部入れた版）
+    candidates = [
+        'gemini-3-pro-preview',
+        'gemini-3-flash-preview',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-preview',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+    ]
 
+    # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
+    cached = st.session_state.get("model_name")
+    if cached:
+        try:
+            return genai.GenerativeModel(cached)
+        except:
+            st.session_state["model_name"] = None
+
+    for m in candidates:
+        try:
+            mod = genai.GenerativeModel(m)
+            st.session_state["model_name"] = m
+            return mod
+        except:
+            continue
+    return None
 
 def generate_summary(files):
     model = get_available_model()
     if not model:
         return None
-
-    content = ["資料の要点を簡潔に要約してください。"]
-
-    # 🔥 最初の1ファイルだけ使う（重さ対策）
-    f = files[0]
-    content.append({
-        "mime_type": "application/pdf",
-        "data": f.getvalue()
-    })
-
+    content = ["資料の要点を、分かりやすく要約してください。"]
+    for f in files:
+        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
     try:
         with st.spinner("要約中..."):
             return model.generate_content(content).text
     except:
         return None
 
-
 def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-
-    prompt = """PDFからクイズ10問をJSONで出力せよ。
-【重要】
-・記述式はoptionsを[]
-・JSONのみ出力
-"""
-
-    content = [prompt]
-
-    # 🔥 最初の1ファイルだけ使う
-    f = files[0]
-    content.append({
-        "mime_type": "application/pdf",
-        "data": f.getvalue()
-    })
-
+    prompt = """PDFからクイズ10問をJSONで出力。
+【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
+    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
     try:
         with st.spinner("クイズ作成中..."):
             res = model.generate_content(content).text
