@@ -425,34 +425,7 @@ def reset_quiz_input_widgets():
 
 # --- AI処理 ---
 def get_available_model():
-    # 💡 指定のモデルリスト（全部入れた版）
-    candidates = [
-        'gemini-3-pro-preview',
-        'gemini-3-flash-preview',
-        'gemini-2.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-preview',
-        'gemini-2.5-flash-lite',
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-    ]
-
-    # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
-    cached = st.session_state.get("model_name")
-    if cached:
-        try:
-            return genai.GenerativeModel(cached)
-        except:
-            st.session_state["model_name"] = None
-
-    for m in candidates:
-        try:
-            mod = genai.GenerativeModel(m)
-            st.session_state["model_name"] = m
-            return mod
-        except:
-            continue
-    return None
+    return genai.GenerativeModel("gemini-2.5-pro")
 
 def generate_summary(files):
     model = get_available_model()
