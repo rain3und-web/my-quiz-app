@@ -427,14 +427,14 @@ def reset_quiz_input_widgets():
 def get_available_model():
     # 💡 指定のモデルリスト（全部入れた版）
     candidates = [
-        'gemini-3-pro-preview',
-        'gemini-3-flash-preview',
         'gemini-2.5-pro',
         'gemini-2.5-flash',
         'gemini-2.5-flash-preview',
         'gemini-2.5-flash-lite',
         'gemini-2.0-flash',
         'gemini-2.0-flash-lite',
+        'gemini-3-pro-preview',
+        'gemini-3-flash-preview',
     ]
 
     # 追加：前回成功モデルを優先（毎回試行で遅くなるのを防ぐ）
