@@ -471,39 +471,11 @@ def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-
-    # 🔥 すでに要約があればそれを使う
-    if st.session_state.get("summary"):
-        base_content = f"""
-以下の要約内容をもとに、理解度を確認するクイズ10問を作成してください。
-
-【重要】
-・記述式はoptionsを[]
-・JSONのみ出力
-・説明文は禁止
-
-要約：
-{st.session_state['summary']}
-"""
-        try:
-            with st.spinner("クイズ作成中..."):
-                res = model.generate_content(base_content).text
-                data = parse_json_safely(res)
-                return data.get("title", "無題"), data.get("quizzes", [])
-        except:
-            return "無題", []
-
-    # 🔥 要約がない場合のみPDFフル解析
     prompt = """PDFからクイズ10問をJSONで出力。
 【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
-【重要】出力はJSONのみ。
-"""
-
-    content = [prompt] + [
-        {"mime_type": "application/pdf", "data": f.getvalue()}
-        for f in files
-    ]
-
+【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
+    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
     try:
         with st.spinner("クイズ作成中..."):
             res = model.generate_content(content).text
