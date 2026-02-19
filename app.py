@@ -463,24 +463,30 @@ def generate_summary(files):
 
 def start_quiz_generation(files):
     model = get_available_model()
-    if not model or not files:
+    if not model:
         return "無題", []
 
-    text = extract_text_from_pdf(files[0])
+    # 🔥 要約をベースにする
+    if st.session_state.get("summary"):
+        base_text = st.session_state["summary"]
+    else:
+        base_text = generate_summary(files)
+        if not base_text:
+            return "無題", []
 
     prompt = f"""
-以下の資料からクイズ10問をJSON形式で作成してください。
+以下の要約内容をもとに、理解度を確認するクイズ10問を作成してください。
 
 【重要】
-・記述式の場合 options は []
+・記述式は options を []
 ・JSONのみ出力
 ・説明文は禁止
 
 形式：
 {{"title":"タイトル","quizzes":[{{"question":"...","options":["..."],"answer":"...","explanation":"..."}}]}}
 
-資料：
-{text}
+要約：
+{base_text}
 """
 
     try:
