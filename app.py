@@ -423,33 +423,9 @@ def reset_quiz_input_widgets():
             st.session_state.pop(k, None)
     st.session_state['results'] = {}
 
-# --- AI処理（🔥高速版 完全差し替え）---
-
-import fitz  # PyMuPDF
-
-MAX_TEXT_LENGTH = 15000   # ← ここで制限（大きいPDFでも安定）
-
-def extract_text_from_pdfs(files):
-    """PDFからテキストだけ抽出（高速化の核心）"""
-    full_text = ""
-
-    for f in files:
-        try:
-            with fitz.open(stream=f.getvalue(), filetype="pdf") as doc:
-                for page in doc:
-                    full_text += page.get_text()
-        except:
-            continue
-
-    # 🔥 文字数制限（超重要）
-    return full_text[:MAX_TEXT_LENGTH]
-
+# --- AI処理（Cloud安定高速版）---
 
 def get_available_model():
-    """
-    🔥 モデル探索をやめる
-    最初から軽量高速モデル固定
-    """
     try:
         return genai.GenerativeModel("gemini-2.5-flash")
     except:
@@ -461,21 +437,18 @@ def generate_summary(files):
     if not model:
         return None
 
-    pdf_text = extract_text_from_pdfs(files)
+    content = ["資料の要点を簡潔に要約してください。"]
 
-    if not pdf_text.strip():
-        return "テキスト抽出に失敗しました。"
-
-    prompt = f"""
-以下のテキストを分かりやすく要約してください。
-
-{pdf_text}
-"""
+    # 🔥 最初の1ファイルだけ使う（重さ対策）
+    f = files[0]
+    content.append({
+        "mime_type": "application/pdf",
+        "data": f.getvalue()
+    })
 
     try:
         with st.spinner("要約中..."):
-            res = model.generate_content(prompt)
-            return res.text
+            return model.generate_content(content).text
     except:
         return None
 
@@ -485,40 +458,25 @@ def start_quiz_generation(files):
     if not model:
         return "無題", []
 
-    pdf_text = extract_text_from_pdfs(files)
-
-    if not pdf_text.strip():
-        return "無題", []
-
-    prompt = f"""
-以下のテキストからクイズ10問をJSONで出力せよ。
-
+    prompt = """PDFからクイズ10問をJSONで出力せよ。
 【重要】
-・記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること
-・出力はJSONのみ
-・説明文やコードブロックは禁止
-
-形式：
-{{
-  "title": "タイトル",
-  "quizzes": [
-    {{
-      "question": "...",
-      "options": ["...", "..."],
-      "answer": "...",
-      "explanation": "..."
-    }}
-  ]
-}}
-
-テキスト：
-{pdf_text}
+・記述式はoptionsを[]
+・JSONのみ出力
 """
+
+    content = [prompt]
+
+    # 🔥 最初の1ファイルだけ使う
+    f = files[0]
+    content.append({
+        "mime_type": "application/pdf",
+        "data": f.getvalue()
+    })
 
     try:
         with st.spinner("クイズ作成中..."):
-            res = model.generate_content(prompt)
-            data = parse_json_safely(res.text)
+            res = model.generate_content(content).text
+            data = parse_json_safely(res)
             return data.get("title", "無題"), data.get("quizzes", [])
     except:
         return "無題", []
