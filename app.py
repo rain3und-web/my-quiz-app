@@ -444,7 +444,7 @@ def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-    prompt = """PDFからクイズ10問をJSONで出力。
+    prompt = """PDFからクイズ15問をJSONで出力。
 【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
 【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
 {"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
