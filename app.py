@@ -416,6 +416,21 @@ def norm_answer(s: str) -> str:
     s = s.replace("・", "").replace("、", "").replace("。", "")
     return s
 
+
+# 🔥 追加
+def count_japanese_chars(text: str, mode: str = "all") -> int:
+    if not text:
+        return 0
+
+    if mode == "kanji":
+        return len(re.findall(r"[一-龯]", text))
+    elif mode == "katakana":
+        return len(re.findall(r"[ァ-ヶー]", text))
+    elif mode == "hiragana":
+        return len(re.findall(r"[ぁ-ん]", text))
+    else:
+        return len(text)
+
 # ✅ 追加：問題削除/追加後に入力ウィジェットをリセット
 def reset_quiz_input_widgets():
     for k in list(st.session_state.keys()):
@@ -444,11 +459,27 @@ def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
+
     prompt = """PDFからクイズ15問をJSONで出力。
-【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
-【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
-{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
+
+【重要】
+・記述式の場合は question 内に必ず文字数条件を含めること。
+  例：
+  - 「漢字5文字で答えよ」
+  - 「カタカナ6文字で答えよ」
+  - 「日本語10文字で答えよ」
+
+【重要】
+・記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+・出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+
+{"title": "タイトル", "quizzes": [
+  {"question": "..", "options": [], "answer": "..", "explanation": ".."}
+]}
+"""
+
     content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
+
     try:
         with st.spinner("クイズ作成中..."):
             res = model.generate_content(content).text
@@ -743,7 +774,7 @@ if st.session_state['current_quiz']:
                 )
             else:
                 st.session_state['results'][i] = st.text_input(
-                    f"答えを入力 (Q{i+1})", key=f"t_{i}", label_visibility="collapsed", placeholder="回答を入力..."
+                    f"答えを入力 (Q{i+1})", key=f"t_{i}",                 label_visibility="collapsed", placeholder="回答を入力..."
                 )
 
         submitted = st.form_submit_button("✅ 採点", type="primary")
@@ -755,8 +786,33 @@ if st.session_state['current_quiz']:
 
         for i, q in enumerate(st.session_state['current_quiz']):
             ans = st.session_state['results'].get(i, "")
+            question_text = q.get("question", "")
 
-            is_correct = norm_answer(ans) == norm_answer(q.get('answer', ''))
+            # ===== 文字数条件チェック =====
+            length_ok = True
+
+            # 漢字◯文字
+            m = re.search(r"漢字(\d+)文字", question_text)
+            if m:
+                required = int(m.group(1))
+                length_ok = count_japanese_chars(ans, "kanji") == required
+
+            # カタカナ◯文字
+            m = re.search(r"カタカナ(\d+)文字", question_text)
+            if m:
+                required = int(m.group(1))
+                length_ok = count_japanese_chars(ans, "katakana") == required
+
+            # 日本語◯文字
+            m = re.search(r"日本語(\d+)文字", question_text)
+            if m:
+                required = int(m.group(1))
+                length_ok = count_japanese_chars(ans, "all") == required
+
+            is_correct = (
+                norm_answer(ans) == norm_answer(q.get('answer', ''))
+                and length_ok
+            )
 
             st.session_state['current_quiz'][i]['user_ans'] = ans
             st.session_state['current_quiz'][i]['is_correct'] = is_correct
@@ -765,7 +821,10 @@ if st.session_state['current_quiz']:
                 st.success(f"第{i+1}問: 正解 (正解: {q.get('answer')})")
                 correct += 1
             else:
-                st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
+                if not length_ok:
+                    st.error(f"第{i+1}問: 文字数条件が違います (正解: {q.get('answer')})")
+                else:
+                    st.error(f"第{i+1}問: 不正解 (正解: {q.get('answer')})")
                 wrong_questions.append(st.session_state['current_quiz'][i])
 
             st.markdown("#### 解説")
