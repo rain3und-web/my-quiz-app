@@ -448,11 +448,12 @@ def start_quiz_generation(files):
     prompt = """PDFからクイズを作成し、JSONで出力してください。
 
 【重要】
-・問題数は最大15問までとすること。
-・PDFから自然に作成できる問題数が15問未満の場合、無理に15問まで増やさないこと。
+・問題数は6問以上15問以下にすること。
+・PDF内に既存の確認テストや設問が含まれている場合は、それらを優先的に利用すること。
+・PDF内に既存の確認テストや設問が6問以上ある場合、それを見落とさず、6問未満で出力しないこと。
+・PDF内に既存の確認テストや設問が15問より多い場合は、最初の15問まで出力すること。
 ・同じ内容を問う重複問題は作らないこと。
-・問題数を埋めるために類似問題や水増し問題を作らないこと。
-・PDF内に既存の確認テストや設問が含まれている場合は、それらを優先的に利用してよい。
+・問題数を埋めるために、既存問題とほぼ同じ類似問題や水増し問題を作らないこと。
 ・記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
 ・出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
 
@@ -469,19 +470,35 @@ def start_quiz_generation(files):
 }
 """
 
-    content = [prompt] + [
+    retry_prompt = prompt + """
+
+【再確認】
+出力された問題数が6問未満です。PDF内の確認テスト・設問・本文をもう一度確認し、6問以上15問以下で出力し直してください。
+特に、複数PDFを渡されている場合は、各PDFの設問を見落とさないでください。
+"""
+
+    content_files = [
         {"mime_type": "application/pdf", "data": f.getvalue()}
         for f in files
     ]
 
     try:
         with st.spinner("クイズ作成中..."):
-            res = model.generate_content(content).text
+            res = model.generate_content([prompt] + content_files).text
             data = parse_json_safely(res)
             quizzes = data.get("quizzes", [])
 
             if not isinstance(quizzes, list):
                 quizzes = []
+
+            # 5問以下で返ってきた場合だけ、1回だけ再生成する
+            if len(quizzes) < 6:
+                res = model.generate_content([retry_prompt] + content_files).text
+                data = parse_json_safely(res)
+                quizzes = data.get("quizzes", [])
+
+                if not isinstance(quizzes, list):
+                    quizzes = []
 
             return data.get("title", "無題"), quizzes[:15]
 
