@@ -444,16 +444,47 @@ def start_quiz_generation(files):
     model = get_available_model()
     if not model:
         return "無題", []
-    prompt = """PDFからクイズ15問をJSONで出力。
-【重要】記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
-【重要】出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
-{"title": "タイトル", "quizzes": [{"question": "..", "options": ["..", ".."], "answer": "..", "explanation": ".."}]}"""
-    content = [prompt] + [{"mime_type": "application/pdf", "data": f.getvalue()} for f in files]
+
+    prompt = """PDFからクイズを作成し、JSONで出力してください。
+
+【重要】
+・問題数は最大15問までとすること。
+・PDFから自然に作成できる問題数が15問未満の場合、無理に15問まで増やさないこと。
+・同じ内容を問う重複問題は作らないこと。
+・問題数を埋めるために類似問題や水増し問題を作らないこと。
+・PDF内に既存の確認テストや設問が含まれている場合は、それらを優先的に利用してよい。
+・記述式や穴埋め問題の場合、optionsは必ず空リスト[]にすること。
+・出力はJSONのみ。前後に説明文やコードブロックは付けないこと。
+
+{
+  "title": "タイトル",
+  "quizzes": [
+    {
+      "question": "..",
+      "options": ["..", ".."],
+      "answer": "..",
+      "explanation": ".."
+    }
+  ]
+}
+"""
+
+    content = [prompt] + [
+        {"mime_type": "application/pdf", "data": f.getvalue()}
+        for f in files
+    ]
+
     try:
         with st.spinner("クイズ作成中..."):
             res = model.generate_content(content).text
             data = parse_json_safely(res)
-            return data.get("title", "無題"), data.get("quizzes", [])
+            quizzes = data.get("quizzes", [])
+
+            if not isinstance(quizzes, list):
+                quizzes = []
+
+            return data.get("title", "無題"), quizzes[:15]
+
     except:
         return "無題", []
 
