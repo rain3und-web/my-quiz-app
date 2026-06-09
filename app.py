@@ -425,7 +425,7 @@ def reset_quiz_input_widgets():
 
 # --- AI処理 ---
 def get_available_model():
-    return genai.GenerativeModel("gemini-2.5-pro")
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 def generate_summary(files):
     model = get_available_model()
