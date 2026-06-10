@@ -263,7 +263,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎓 PDF要約＆クイズ生成ツール")
+st.title("🎓 PDFでクイズ作成")
 
 # --- APIキー ---
 # 💡 APIキーを直書きしないように修正（ここは雨音の最新版をそのまま）
