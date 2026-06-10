@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 import gspread
 
 # --- 画面設定 ---
-st.set_page_config(page_title="PDF要約＆クイズ生成ツール", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="PDFクイズ生成ツール", page_icon="🎓", layout="wide")
 JST = timezone(timedelta(hours=+9), 'JST')
 
 # --- Googleスプレッドシート連携 ---
@@ -489,28 +489,24 @@ def start_quiz_generation(files):
 
 # --- メインロジック ---
 if uploaded_files:
-    c1, c2 = st.columns(2)
+    col1, col2, col3 = st.columns([1, 2, 1])
 
-    # ===== クイズ生成 =====
-    with c2:
+    with col2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
 
             t, q = start_quiz_generation(uploaded_files)
 
-            # 🔥 毎回必ず新しい履歴として作る（上書き防止）
             st.session_state['current_date'] = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
 
             st.session_state.update({
                 "current_title": t,
                 "current_quiz": q,
                 "results": {},
-                "edit_mode": False
+                "edit_mode": False,
+                "show_retry": False,
+                "last_wrong_questions": []
             })
 
-            st.session_state['show_retry'] = False
-            st.session_state['last_wrong_questions'] = []
-
-            # ===== 履歴に新規追加 =====
             if st.session_state.get('user_id'):
                 init_log = {
                     "date": st.session_state['current_date'],
@@ -522,14 +518,9 @@ if uploaded_files:
                     "summary_data": ""
                 }
 
-                save_history_to_gs(
-                    st.session_state['user_id'],
-                    init_log
-                )
+                save_history_to_gs(st.session_state['user_id'], init_log)
 
-                st.session_state['quiz_history'] = load_history_from_gs(
-                    st.session_state['user_id']
-                )
+                st.session_state['quiz_history'] = load_history_from_gs(st.session_state['user_id'])
 
             st.rerun()
 
