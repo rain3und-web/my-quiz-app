@@ -420,7 +420,7 @@ def reset_quiz_input_widgets():
 
 # --- AI処理 ---
 def get_available_model():
-    return genai.GenerativeModel("gemini-2.5-flash")
+    return genai.GenerativeModel("gemini-3.1-flash-lite")
 
 def start_quiz_generation(files):
     model = get_available_model()
