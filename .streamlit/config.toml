@@ -1,6 +1,6 @@
 [theme]
-primaryColor = "#FFFFFF"
-backgroundColor = "#F0F0F0"
-secondaryBackgroundColor = "#E0E0E0"
-textColor = "#000000"
+primaryColor = "#E63946"  # 鮮やかな赤（ボタン・強調）
+backgroundColor = "#EAF4FF"  # 薄いブルー（全体背景）
+secondaryBackgroundColor = "#CFE3FF"  # 少し濃いブルー（カード・サイドバー）
+textColor = "#2B2B2B"  # 濃いグレー
 font = "sans serif"
