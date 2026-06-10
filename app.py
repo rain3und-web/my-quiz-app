@@ -237,8 +237,8 @@ st.markdown("""
     .question-box {
         display: flex; /* 横並びにする */
         align-items: flex-start; /* 上端で揃える */
-        background-color: #FFF7FB;
-        border-left: 4px solid #DDA0DD;
+        background-color: #f0f8ff;
+        border-left: 4px solid #0078d7;
         padding: 12px 15px;
         border-radius: 4px;
         margin-bottom: 8px;
