@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from google.oauth2.service_account import Credentials
 import gspread
+import hashlib
 
 # --- 画面設定 ---
 st.set_page_config(page_title="PDFクイズ生成ツール", page_icon="🎓", layout="wide")
@@ -200,6 +201,8 @@ if 'last_wrong_questions' not in st.session_state:
     st.session_state['last_wrong_questions'] = []
 if 'show_retry' not in st.session_state:
     st.session_state['show_retry'] = False
+if 'last_pdf_hash' not in st.session_state:
+    st.session_state['last_pdf_hash'] = None
 
 # ✅ 追加：履歴個別アーカイブの誤爆防止用（対象保持）
 if 'pending_delete' not in st.session_state:
@@ -419,8 +422,15 @@ def reset_quiz_input_widgets():
     st.session_state['results'] = {}
 
 # --- AI処理 ---
+@st.cache_resource
 def get_available_model():
     return genai.GenerativeModel("gemini-3.1-flash-lite")
+
+def calc_files_hash(files):
+    h = hashlib.sha256()
+    for f in files:
+        h.update(f.getvalue())
+    return h.hexdigest()
 
 def start_quiz_generation(files):
     model = get_available_model()
@@ -493,6 +503,14 @@ if uploaded_files:
 
     with col2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
+
+            current_hash = calc_files_hash(uploaded_files)
+
+            if st.session_state['last_pdf_hash'] == current_hash:
+                st.info("このPDFはすでに生成済みです")
+                st.stop()
+
+            st.session_state['last_pdf_hash'] = current_hash
 
             t, q = start_quiz_generation(uploaded_files)
 
