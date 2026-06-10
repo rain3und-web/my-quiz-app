@@ -1,6 +1,5 @@
-[theme]
-primaryColor = "#4A90E2"               # 柔らかいブルー
-backgroundColor = "#FAFAF2"            # 薄いクリーム色
-secondaryBackgroundColor = "#FFFFFF"   # カードやサイドバーは白
-textColor = "#333333"                  # 黒より優しいダークグレー
-font = "sans serif"                    # 読みやすいサンセリフ体
+primaryColor = "#FFFFFF"
+backgroundColor = "#F0F0F0"
+secondaryBackgroundColor = "#E0E0E0"
+textColor = "#000000"
+font = "sans serif"
