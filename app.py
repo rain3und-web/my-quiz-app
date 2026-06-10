@@ -50,6 +50,7 @@ def load_history_from_gs(user_id):
                     "correct": r.get("correct"),
                     "total": r.get("total"),
                     "quiz_data": q_data,
+                    "summary_data": r.get("summary_data"),
                     "archived": r.get("archived", False)  # ✅ 追加
                 })
         return user_history
@@ -65,7 +66,8 @@ def save_history_to_gs(user_id, log_entry):
         row = [
             user_id, log_entry["date"], log_entry.get("title", "無題"),
             log_entry.get("score", ""), log_entry.get("correct", ""), log_entry.get("total", ""),
-            json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False)
+            json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False),
+            log_entry.get("summary_data", "")
         ]
 
         # ✅ 追加：archived列分を末尾に付与（新規は未アーカイブ）
@@ -166,6 +168,7 @@ def upsert_history_in_gs(user_id, date_str, log_entry):
         correct = log_entry.get("correct", "")
         total = log_entry.get("total", "")
         quiz_data = json.dumps(log_entry.get("quiz_data", []), ensure_ascii=False)
+        summary_data = log_entry.get("summary_data", "")
 
         if target_row:
             # columns: 1 user_id, 2 date, 3 title, 4 score, 5 correct, 6 total, 7 quiz_data, 8 summary_data
@@ -174,17 +177,18 @@ def upsert_history_in_gs(user_id, date_str, log_entry):
             sheet.update_cell(target_row, 5, correct)
             sheet.update_cell(target_row, 6, total)
             sheet.update_cell(target_row, 7, quiz_data)
+            sheet.update_cell(target_row, 8, summary_data)
             return True
         else:
             # 無ければ新規作成（archivedは空欄）
-            row = [user_id, date_str, title, score, correct, total, quiz_data, ""]
+            row = [user_id, date_str, title, score, correct, total, quiz_data, summary_data, ""]
             sheet.append_row(row)
             return True
     except:
         return False
 
 # --- セッション初期化 ---
-for key in ['user_id', 'quiz_history', 'current_quiz', 'results', 'current_date', 'edit_mode']:
+for key in ['user_id', 'quiz_history', 'current_quiz', 'results', 'summary', 'current_date', 'edit_mode']:
     if key not in st.session_state:
         st.session_state[key] = None if key != 'quiz_history' and key != 'results' else ([] if key == 'quiz_history' else {})
         if key == 'edit_mode':
@@ -318,6 +322,7 @@ with st.sidebar:
             with c_hist:
                 if st.button(btn_label, key=f"hist_{i}", use_container_width=True, type="secondary"):
                     st.session_state['current_quiz'] = log['quiz_data']
+                    st.session_state['summary'] = log['summary_data']
                     st.session_state['current_title'] = t
                     st.session_state['current_date'] = d
                     st.session_state['edit_mode'] = False
@@ -422,6 +427,19 @@ def reset_quiz_input_widgets():
 def get_available_model():
     return genai.GenerativeModel("gemini-2.0-flash")
 
+def generate_summary(files):
+    model = get_available_model()
+    if not model:
+        return None
+    content = ["資料の要点を、分かりやすく要約してください。"]
+    for f in files:
+        content.append({"mime_type": "application/pdf", "data": f.getvalue()})
+    try:
+        with st.spinner("要約中..."):
+            return model.generate_content(content).text
+    except:
+        return None
+
 def start_quiz_generation(files):
     model = get_available_model()
     if not model:
@@ -491,6 +509,11 @@ def start_quiz_generation(files):
 if uploaded_files:
     c1, c2 = st.columns(2)
 
+    # ===== 要約 =====
+    with c1:
+        if st.button("📝 資料を要約する", use_container_width=True):
+            st.session_state['summary'] = generate_summary(uploaded_files)
+
     # ===== クイズ生成 =====
     with c2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
@@ -519,7 +542,7 @@ if uploaded_files:
                     "correct": "",
                     "total": "",
                     "quiz_data": q,
-                    "summary_data": ""
+                    "summary_data": st.session_state.get('summary') or ""
                 }
 
                 save_history_to_gs(
@@ -532,6 +555,8 @@ if uploaded_files:
                 )
 
             st.rerun()
+if st.session_state['summary']:
+    st.info(f"### 📋 要約\n{st.session_state['summary']}")
 
 if st.session_state['current_quiz']:
     st.divider()
@@ -827,7 +852,8 @@ if st.session_state['current_quiz']:
                 "score": score,
                 "correct": correct,
                 "total": total,
-                "quiz_data": st.session_state['current_quiz']
+                "quiz_data": st.session_state['current_quiz'],
+                "summary_data": st.session_state['summary']
             }
 
             # 以前の日付があればアーカイブ
