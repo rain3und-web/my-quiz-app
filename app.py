@@ -9,7 +9,7 @@ import gspread
 import hashlib
 
 # --- 画面設定 ---
-st.set_page_config(page_title="PDFクイズ生成ツール", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="PDFでクイズ作成", page_icon="🎓", layout="wide")
 JST = timezone(timedelta(hours=+9), 'JST')
 
 # --- Googleスプレッドシート連携 ---
@@ -278,7 +278,7 @@ else:
 with st.sidebar:
     st.header("👤 ログイン")
     user_input = st.text_input("ユーザー名", value=st.session_state['user_id'] or "")
-    if st.button("ログイン / 切り替え", key="login_btn", type="primary"):
+    if st.button("ログイン", key="login_btn", type="primary"):
         if user_input:
             st.session_state['user_id'] = user_input
             with st.spinner("同期中..."):
