@@ -200,6 +200,33 @@ def calc_files_hash(files):
         h.update(f.getvalue())
     return h.hexdigest()
 
+def clean_title(filename: str) -> str:
+    """✅ 新機能：ファイル名から拡張子や不要な文字を削除して美しいタイトルを生成"""
+    # 拡張子 (.pdf) を除去
+    name = re.sub(r'\.pdf$', '', filename, flags=re.IGNORECASE)
+    
+    # 削除したいキーワードやパターンを追加・調整できます
+    patterns = [
+        r"\(.*?\)",        # 半角括弧と中身 例: (1)
+        r"（.*?）",        # 全角括弧と中身 例: （１）
+        r"テスト",         # 「テスト」という文字
+        r"クイズ",         # 「クイズ」という文字
+        r"のコピー",       # ダウンロード時の接尾辞など
+        r"コピー",
+        r"_+",             # アンダースコアの連続
+        r"[\s　]+",        # 余計な空白
+    ]
+    
+    cleaned = name
+    for p in patterns:
+        cleaned = re.sub(p, "", cleaned)
+    
+    # 整形後、文字が消えすぎて空になった場合のフォールバック
+    if not cleaned.strip():
+        cleaned = "無題のクイズ"
+        
+    return cleaned.strip()
+
 @st.cache_resource
 def get_available_model():
     return genai.GenerativeModel("gemini-3.1-flash-lite")
@@ -207,8 +234,9 @@ def get_available_model():
 def start_quiz_generation(files):
     model = get_available_model()
     if not model:
-        return "無題", []
+        return []
 
+    # AIへの指示から「タイトルを付ける」というタスクを削除し、純粋にクイズ作成に集中させます
     prompt = """PDFからクイズを作成してください。
 【重要】
 ・問題数は6問以上15問以下にすること。
@@ -216,7 +244,6 @@ def start_quiz_generation(files):
 ・出力は必ずJSON形式にすること。
 
 {
-  "title": "タイトル",
   "quizzes": [
     {
       "question": "..",
@@ -231,7 +258,6 @@ def start_quiz_generation(files):
 
     try:
         with st.spinner("クイズ作成中..."):
-            # generation_configでJSON出力を強制（パースエラーを根絶）
             res = model.generate_content(
                 [prompt] + content_files,
                 generation_config=genai.types.GenerationConfig(response_mime_type="application/json")
@@ -240,7 +266,6 @@ def start_quiz_generation(files):
             data = json.loads(res)
             quizzes = data.get("quizzes", [])
 
-            # 5問以下の場合は再生成（ここでもJSON指定）
             if len(quizzes) < 6:
                 res = model.generate_content(
                     ["出力された問題数が6問未満です。もう一度確認し、6問以上15問以下で出力し直してください。"] + content_files,
@@ -249,10 +274,10 @@ def start_quiz_generation(files):
                 data = json.loads(res)
                 quizzes = data.get("quizzes", [])
 
-            return data.get("title", "無題"), quizzes[:15]
+            return quizzes[:15]
     except Exception as e:
         st.error(f"クイズ生成エラー: {e}")
-        return "無題", []
+        return []
 
 # --- セッション初期化 ---
 for key in ['user_id', 'quiz_history', 'current_quiz', 'current_quiz_id', 'results', 'current_date', 'edit_mode']:
@@ -396,7 +421,13 @@ if uploaded_files:
                 st.stop()
 
             st.session_state['last_pdf_hash'] = current_hash
-            t, q = start_quiz_generation(uploaded_files)
+            
+            # ✅ AIにクイズだけを作らせる
+            q = start_quiz_generation(uploaded_files)
+            
+            # ✅ 1枚目のPDFのファイル名からタイトルを自動生成
+            first_filename = uploaded_files[0].name
+            t = clean_title(first_filename)
 
             new_quiz_id = uuid.uuid4().hex[:8]
             new_date = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
