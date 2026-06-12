@@ -416,16 +416,26 @@ if uploaded_files:
     with col2:
         if st.button("🚀 クイズを生成", use_container_width=True, type="primary"):
             current_hash = calc_files_hash(uploaded_files)
-            if st.session_state['last_pdf_hash'] == current_hash:
-                st.info("このPDFはすでに生成済みです")
-                st.stop()
-
-            st.session_state['last_pdf_hash'] = current_hash
             
-            # ✅ AIにクイズだけを作らせる
+            # ✅ 修正箇所：現在のセッションに問題が存在する時だけブロックする
+            if st.session_state['last_pdf_hash'] == current_hash and st.session_state.get('current_quiz'):
+                st.info("このPDFのクイズは既に生成・表示されています。")
+                st.stop()
+            
+            # ✅ AIにクイズを作らせる
             q = start_quiz_generation(uploaded_files)
             
-            # ✅ 1枚目のPDFのファイル名からタイトルを自動生成
+            # ✅ 修正箇所：生成に失敗した（空リストが返ってきた）場合の処理
+            if not q:
+                st.error("⚠️ クイズの生成に失敗しました。時間をおいてもう一度ボタンを押してください。")
+                # 失敗時はハッシュをリセットし、再度同じPDFで押せるようにする
+                st.session_state['last_pdf_hash'] = None
+                st.stop()
+
+            # 成功した時だけハッシュを記録する
+            st.session_state['last_pdf_hash'] = current_hash
+            
+            # 1枚目のPDFのファイル名からタイトルを自動生成
             first_filename = uploaded_files[0].name
             t = clean_title(first_filename)
 
