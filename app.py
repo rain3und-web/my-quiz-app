@@ -229,7 +229,7 @@ def clean_title(filename: str) -> str:
 
 @st.cache_resource
 def get_available_model():
-    return genai.GenerativeModel("gemini-3.1-flash-lite-preview")
+    return genai.GenerativeModel("gemini-3.1-flash-lite-")
 
 def start_quiz_generation(files):
     model = get_available_model()
